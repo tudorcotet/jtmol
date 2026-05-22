@@ -1,0 +1,43 @@
+[project]
+name = "tmol_jax"
+description = "Pure-JAX port of tmol (Rosetta beta_nov2016_cart energy function)."
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+version = "0.1.0"
+
+dependencies = [
+    "jax>=0.4.30",
+    "jaxlib>=0.4.30",
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "attrs>=21.0",
+    "pyyaml>=6.0",
+    "networkx>=3.0",
+    "pandas>=2.0",
+    "biotite>=0.41.0",
+    "typing_extensions>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "optax>=0.2.0"]
+# ``torch`` is only needed to regenerate the ``.npz`` scoring tables via
+# ``scripts/convert_binary_tables.py`` (or to read the legacy
+# ``rama.zip`` / ``omega_bbdep.zip`` / ``dunbrack.bin`` directly).
+# Normal usage of tmol_jax does not require torch.
+torch-convert = ["torch>=2.0"]
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["tmol_jax*"]
+
+[tool.setuptools.package-data]
+tmol_jax = [
+    "database/**/*.yaml",
+    "database/**/*.bin",
+    "database/**/*.zip",
+    "database/**/*.npz",
+]
