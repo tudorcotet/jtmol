@@ -649,6 +649,35 @@ def _inter_residue_subgraphs_for_pair(
         )
         rev_names = _reverse(names)
 
+        # Choose which residue dict to consult first based on which side
+        # owns the majority of atoms in this subgraph. This mirrors the
+        # upstream behaviour (see ``cartbonded_pose_score.impl.hh`` ~L410):
+        # the kernel iterates both (A,B) and (B,A) directions, and for
+        # each direction tries ``unique_ids[A] + wildcard_ids[B]`` first,
+        # then ``wildcard_ids[A] + wildcard_ids[B]``. The net effect is
+        # that the param entry from the residue containing the FIRST TWO
+        # atoms of the joined path wins: that's because upstream's
+        # ``get_params_for_res`` wildcards only the atoms AFTER the first
+        # C-N or N-C peptide-bond transition, so a residue's own atoms
+        # are the leading positions in its (atm1, atm2, atm3, ...) param
+        # entry.
+        #
+        # Our enumeration always joins as ``rev(A_path) + B_path``, so:
+        #   - is_on_B = (F, T, T)        : B owns positions 1, 2 -> B
+        #   - is_on_B = (F, F, T)        : A owns positions 0, 1 -> A
+        #   - is_on_B = (F, T, T, T)     : B owns positions 1, 2, 3 -> B
+        #   - is_on_B = (F, F, T, T)     : tie -> default to A (matches
+        #     upstream's forward-direction first attempt)
+        #   - is_on_B = (F, F, F, T)     : A owns positions 0..2 -> A
+        # Pick the dict pair (primary, secondary) accordingly. Length
+        # subgraphs (size 2) always have one atom on each side; for those
+        # the param almost always lives in the ``wildcard`` residue (the
+        # peptide-bond C-N length), so the order between A/B doesn't
+        # matter in practice. We keep A-first for backwards-compat.
+        n_B = sum(1 for b in is_on_B if b)
+        n_A = len(is_on_B) - n_B
+        b_owns = n_B > n_A
+
         dedup_key = (atoms, is_on_B)
         n = len(atoms)
         if n == 2:
@@ -669,28 +698,51 @@ def _inter_residue_subgraphs_for_pair(
             if dedup_key in seen_angles:
                 continue
             seen_angles.add(dedup_key)
-            params = (
-                adb_A.get(names)
-                or adb_A.get(rev_names)
-                or adb_B.get(names)
-                or adb_B.get(rev_names)
-                or adb_W.get(names)
-                or adb_W.get(rev_names)
-            )
+            if b_owns:
+                # B's param entry has B-atoms as (atm1, atm2); the joined
+                # path has them at positions 1, 2. So B's stored
+                # (atm1, atm2, atm3) equals reversed(names).
+                params = (
+                    adb_B.get(rev_names)
+                    or adb_B.get(names)
+                    or adb_A.get(names)
+                    or adb_A.get(rev_names)
+                    or adb_W.get(names)
+                    or adb_W.get(rev_names)
+                )
+            else:
+                params = (
+                    adb_A.get(names)
+                    or adb_A.get(rev_names)
+                    or adb_B.get(names)
+                    or adb_B.get(rev_names)
+                    or adb_W.get(names)
+                    or adb_W.get(rev_names)
+                )
             if params is not None:
                 angles_out.append((atoms, is_on_B, params))
         elif n == 4:
             if dedup_key in seen_torsions:
                 continue
             seen_torsions.add(dedup_key)
-            params = (
-                tdb_A.get(names)
-                or tdb_A.get(rev_names)
-                or tdb_B.get(names)
-                or tdb_B.get(rev_names)
-                or tdb_W.get(names)
-                or tdb_W.get(rev_names)
-            )
+            if b_owns:
+                params = (
+                    tdb_B.get(rev_names)
+                    or tdb_B.get(names)
+                    or tdb_A.get(names)
+                    or tdb_A.get(rev_names)
+                    or tdb_W.get(names)
+                    or tdb_W.get(rev_names)
+                )
+            else:
+                params = (
+                    tdb_A.get(names)
+                    or tdb_A.get(rev_names)
+                    or tdb_B.get(names)
+                    or tdb_B.get(rev_names)
+                    or tdb_W.get(names)
+                    or tdb_W.get(rev_names)
+                )
             if params is not None:
                 torsions_out.append((atoms, is_on_B, params))
 
