@@ -153,6 +153,17 @@ TmolInterfaceLoss(ps_tpl, term_weights={
 Sweep these as a design hyperparameter. mosaic's existing ranking loss
 (IPTM + IPSAE) is unaffected; apply it at the end as before.
 
+One thing worth knowing before you sweep: most reweightings just
+*rescale* the baseline gradient rather than rotate it. On 1ubq split
+into binder + target as a toy interface, cosine similarity to the
+default `beta_nov2016` gradient is +0.98 for "boost elec + Hbond",
++0.998 for "LJ-only", +0.98 for "water-mediated". The one scheme that
+genuinely changes the gradient direction is **zeroing the LJ
+channels** (cos = +0.31). From the optimizer's perspective the others
+are equivalent to changing the learning rate. The reproducer is in
+[`examples/demo_steering.py`](../examples/demo_steering.py); run it
+on whatever target you care about before you commit to a sweep grid.
+
 ## 4. Ranking-time full physics
 
 At the post-design reprediction step, use the full beta_nov2016 score
