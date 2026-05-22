@@ -1,16 +1,15 @@
 # Using jtmol as a binding-affinity loss in mosaic / Boltz-2 design
 
-jtmol (the JAX-native port of Rosetta `beta_nov2016_cart` energy) plugs
-into the [escalante-bio/mosaic](https://github.com/escalante-bio/mosaic)
-hallucination loop as an additional `LossTerm`. The headline use case is
-to add **physics-based binding-affinity gradient signal** alongside
-mosaic's ML structure-prediction losses, without giving up any of the
-existing iPTM / PAE / pLDDT pressure.
+jtmol plugs into the [escalante-bio/mosaic](https://github.com/escalante-bio/mosaic)
+hallucination loop as another `LossTerm`. The point is to add a
+physics-based binding-affinity gradient alongside mosaic's ML
+structure-prediction losses, on the same backward pass, without giving
+up any of the existing iPTM / PAE / pLDDT pressure.
 
-This guide assumes:
-* you have mosaic installed and a working hallucination script (e.g.
-  the [Nick Boyd gist](https://gist.github.com/nboyd/7b30c4033f834fc532a106d902fbdffa) hallucinator),
-* you have `jtmol` installed (`uv pip install -e .` or `pip install -e .` from this repo).
+This guide assumes you have mosaic installed and a working
+hallucination script (e.g. the [Nick Boyd gist](https://gist.github.com/nboyd/7b30c4033f834fc532a106d902fbdffa)
+hallucinator), and you have `jtmol` installed (`uv pip install -e .`
+or `pip install -e .` from this repo).
 
 ## 1. The three loss terms
 
@@ -119,9 +118,9 @@ loss = NoCys(
 # … rest of the design loop is unchanged from the gist.
 ```
 
-That's it. `simplex_APGM` picks up the physics gradient automatically
-because both Boltz-2 and jtmol are pure JAX — `jax.grad` flows through
-both layers.
+`simplex_APGM` picks up the physics gradient automatically because
+both Boltz-2 and jtmol are pure JAX, so `jax.grad` flows through both
+layers without an autograd-boundary crossing.
 
 ## 3. The per-term knob (the experimental axis)
 
@@ -152,7 +151,7 @@ TmolInterfaceLoss(ps_tpl, term_weights={
 ```
 
 Sweep these as a design hyperparameter. mosaic's existing ranking loss
-(IPTM + IPSAE) is unaffected — apply at the end as before.
+(IPTM + IPSAE) is unaffected; apply it at the end as before.
 
 ## 4. Ranking-time full physics
 
@@ -179,9 +178,9 @@ ranking_loss = folder.build_multisample_loss(
 )
 ```
 
-This gives a physics-correctness component to the ranking score so
-that designs which look great to the ML model but have hidden geometric
-issues (clashes, broken bonds) get penalized.
+This gives the ranker a physics-correctness signal, so designs that
+look great to the ML model but have hidden geometric issues (clashes,
+broken bonds) get penalized at selection time.
 
 ## 5. Cost overhead
 
@@ -193,22 +192,22 @@ jtmol adds a small fixed cost per Boltz-2 step:
 | gradient | ~3.3 |
 | Boltz-2 step (B200 GPU, ~700 res) | ~5000–10000 |
 
-So jtmol is **rounding error** vs Boltz-2 — full physics-augmented
-design has the same wall-clock as vanilla mosaic.
+So jtmol is rounding error compared to Boltz-2; physics-augmented
+design has the same wall-clock as the vanilla mosaic loop.
 
 ## 6. Parity guarantees
 
 jtmol is parity-verified against upstream PyTorch tmol:
 
-* **Forward energy:** 20/20 score terms bit-exact on 1ubq, 1qys
-  (full beta_nov2016_cart). See `docs/UPSTREAM_PARITY.md`.
-* **Gradient:** matches central finite-difference of upstream's forward
-  to ~1e-9 in float64 across all terms. (One known upstream bug at
-  sp2 backbone-O acceptors documented in
+* **Forward energy:** 20/20 score terms forward-bit-exact on 1ubq,
+  1qys (full `beta_nov2016_cart`). See `docs/UPSTREAM_PARITY.md`.
+* **Gradient:** matches central finite-difference of upstream's
+  forward to ~1e-9 in float64 across all terms. One known upstream
+  bug at sp2 backbone-O acceptors is documented in
   `docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md`; jtmol gives the
-  mathematically correct gradient there.)
-* **Multi-chain:** matches upstream on 1cgi, 7opb, 2oob; refuses
-  1BL8 with the same error message as upstream.
+  mathematically correct gradient there.
+* **Multi-chain:** matches upstream on 1cgi, 7opb, 2oob; refuses 1BL8
+  with the same error message as upstream.
 
 ## 7. Open knobs
 

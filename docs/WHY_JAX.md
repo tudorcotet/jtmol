@@ -1,82 +1,89 @@
-# Why the JAX port exists & expected speedups
+# Why we re-implemented tmol in JAX
 
-## Why port tmol to JAX
+Upstream tmol is PyTorch + hand-written C++/CUDA kernels. The math is
+all there and the GPU implementation is well-tuned, but for the ML
+design loops we care about (Boltz-2-driven hallucination, mosaic loss
+composition, diffusion-time guidance) we kept hitting the same three
+walls.
 
-Upstream tmol is PyTorch + custom C++/CUDA kernels. Three gaps motivated the JAX port:
+## What the port gives us
 
-1. **Backward pass complexity.** Every new energy term in upstream requires a hand-written CUDA backward kernel alongside the forward kernel (see `tmol/score/ljlk/potentials/ljlk_pose_score.cuda.cu` — ~1600 lines of which ~half is the adjoint of the forward pass). In JAX, `jax.grad` auto-differentiates the forward expression. We wrote one `lj_atr_rep(dist, ...)` function and get the gradient for free. This cut the per-term code roughly in half.
+**No hand-written backward kernels.** Every new energy term in
+upstream needs a paired CUDA backward — `tmol/score/ljlk/potentials/ljlk_pose_score.cuda.cu`
+is ~1600 lines, roughly half of which is the adjoint. In JAX,
+`jax.grad` autodifferentiates the forward expression. We wrote one
+`lj_atr_rep(dist, ...)` function and got the gradient for free. The
+only place we still write derivatives by hand is at the cubic-Hermite
+interpolation knots (omega, cart_torsions, cart_hxltorsions), and
+that is only because the autodiff path picks the wrong one-sided
+derivative at the knot. We close that gap with `@jax.custom_jvp` and
+Blondel & Karplus's 1996 analytical formulas.
 
-2. **Parallelism over conformations (`vmap`).** tmol scores one pose stack at a time. For ML-loop use cases — training a generative model that proposes K rotamer configurations per protein per step, evaluating 10,000 design candidates from a diffusion sampler, MCMC over the whole energy landscape — you want the score function as a batched kernel: `E = sfxn(coords)` with `coords.shape = [batch, N, 3]`. `jax.vmap` makes that one line. Upstream requires a Python loop or separate multi-GPU setup.
+**Parallelism over conformations is one line of `vmap`.** Upstream
+scores one pose stack at a time. For the use cases we actually care
+about — training a generative model that proposes K rotamer configs
+per protein per step, evaluating 10,000 design candidates from a
+diffusion sampler, MCMC over the energy landscape — we want
+`E = sfxn(coords)` with `coords.shape = [batch, N, 3]` as a batched
+kernel. `jax.vmap` makes that one line; the alternative is a Python
+loop or a separate multi-GPU setup.
 
-3. **Composition with other JAX libraries.** Drop tmol_jax scoring anywhere inside a JAX pipeline — sampler, diffusion model, Flax protein model, optax optimizer — without touching the autograd boundary. No `detach` or `torch.tensor(jax_arr)` dance.
+**Composition with the rest of the JAX stack is free.** Drop jtmol
+scoring anywhere inside a JAX pipeline — sampler, diffusion model,
+Flax protein model, optax optimizer — without crossing an autograd
+boundary. No `detach`, no `torch.tensor(jax_arr)` dance. This is the
+single biggest reason we did the port; the binding-affinity loss in
+the mosaic hallucinator (see [MOSAIC_INTEGRATION.md](MOSAIC_INTEGRATION.md))
+would be a much bigger lift without it.
 
-4. **Deployment simplicity.** Pure JAX = no custom CUDA kernels to compile per GPU architecture. Installs cleanly wherever JAX installs. No `ninja` / `nvcc` at install time.
+**Deployment is simpler.** Pure JAX means no custom CUDA kernels to
+compile per GPU architecture, no `ninja` / `nvcc` at install time.
+Works wherever JAX installs.
 
-## Speedups
+## What we've measured
 
-### Apples-to-apples (CPU, 1UBQ, 1228 atoms)
+Apples-to-apples on CPU (M3 Max, 1ubq, 1228 atoms):
 
-| Operation | tmol_jax (dense) | tmol_jax (neighbor list) | Speedup |
-|---|---:|---:|---:|
-| Single energy | 8.9 ms | 1.5 ms | **6.0×** |
-| Single gradient | 8.7 ms | 3.3 ms | **2.7×** |
-| Intermediate memory | 5.78 MiB | 457 KiB | **13×** smaller |
+| Operation | dense | neighbor list |
+|---|---:|---:|
+| Single energy | 8.9 ms | 1.5 ms |
+| Single gradient | 8.7 ms | 3.3 ms |
+| Intermediate memory | 5.78 MiB | 457 KiB |
 
-The neighbor list (cell list, cutoff = 6 Å) iterates only real pairs; dense path builds the full `[N, N]` distance matrix. For 5000-atom systems the dense path is infeasible; neighbor-list scales linearly.
+The neighbor-list path (cell list, 6 Å cutoff) iterates real pairs
+only; the dense path builds the full `[N, N]` distance matrix and
+becomes infeasible past ~5000 atoms, where the NL path keeps scaling
+linearly.
 
-### vmap: the killer feature
+Scoring 100 perturbed 1ubq conformations on CPU:
 
-Scoring 100 perturbed conformations of 1UBQ (Python loop vs `jax.vmap`):
-
-| Approach | Wall time (CPU) | Per-pose cost |
+| Approach | Wall time | Per-pose |
 |---|---:|---:|
 | Python `for` loop | ~150 ms | 1.5 ms |
-| `jax.vmap(jit(sfxn))` | ~5-10 ms | 0.05-0.1 ms |
-| **Speedup** | — | **15-30×** on CPU, **100-500×** on GPU |
+| `jax.vmap(jit(sfxn))` | ~5–10 ms | 0.05–0.1 ms |
 
-On GPU the vmap collapses to a single kernel launch over the batch dimension, so the per-pose cost becomes nearly flat as batch size grows — the classic "free lunch" JAX gives you.
+On GPU the vmap collapses to a single kernel launch over the batch
+dim, so per-pose cost goes nearly flat as batch size grows. We
+haven't benchmarked the full GPU sweep yet — when we do we'll add it
+here.
 
-### Gradient scaling
+## Where jtmol still loses to upstream
 
-Gradients under vmap: `jax.vmap(jax.grad(sfxn))(batch_coords)` gives you the gradient at every perturbation in one XLA compiled kernel. Upstream requires N forward+backward passes.
+- **Single-structure peak throughput on a hand-tuned CUDA GPU.**
+  Upstream's register-level shared-memory kernels are 2–3× faster
+  than the vmap-of-dense path for one giant pose with no batch. The
+  neighbor-list path narrows this but doesn't yet close it.
+- **Mature rotamer packer with interaction-graph caching.** Our
+  packer is direct Metropolis-MC. Correct, but upstream has years of
+  C++ tuning we don't.
 
-For a typical ML training loop (100 candidate structures per step, 1000 steps, one gradient per candidate):
-- Upstream: 100,000 × 8.7 ms = **14.5 min** per epoch
-- tmol_jax vmap+jit on GPU: ~**20 sec** per epoch (est.)
+## Parity
 
-## When the JAX port wins
-
-| Scenario | Why it matters | Gain vs upstream |
-|---|---|---|
-| **ML training**: gradient-through-energy for protein design / folding models | vmap + `jax.grad` collapse to one kernel | 20–200× |
-| **Batch rotamer energies**: evaluate 10K design candidates per round | vmap over rotamer palette | 50–500× on GPU |
-| **Diffusion sampling**: score many perturbations in parallel for guidance | vmap + jit; no `torch.no_grad()` tricks needed | 10–100× |
-| **MD-style pulling / metadynamics**: 100+ replicas in parallel | vmap over replica dim | 50–300× |
-| **Large systems (>5000 atoms)**: neighbor list auto-scales | dense path runs OOM; NL path works | Essential |
-| **Jupyter / Colab dev loops**: jit compile once, re-score instantly | No per-change rebuild of CUDA kernels | 1×-easy, 0×-build |
-| **CPU-only environments**: Mac laptop, CI, edge devices | No CUDA compile step | Works where upstream doesn't |
-
-## When upstream tmol still wins
-
-- **Single-structure peak throughput on high-end CUDA GPU with pre-compiled kernels.** tmol's hand-tuned shared-memory kernels are ~2–3× faster than our vmap-of-dense approach for one giant pose with no batch. We close this gap with the neighbor-list path but don't yet match upstream's register-level optimization.
-- **Mature rotamer packer with interaction-graph caching.** Our packer is a direct MC with DEE — fine for correctness but upstream has years of tuning.
-
-## Quick sanity numbers (measured on M3 Max CPU, single core)
-
-Score function covers all 20 energy channels (LJ/LK, elec, hbond, rama, dunbrack, cart_bonded, lk_ball, disulfide, ref):
-
-| Mode | 1ubq energy | 1ubq gradient |
-|---|---:|---:|
-| dense + jit | 8.9 ms | 8.7 ms |
-| neighbor list + jit | 1.5 ms | 3.3 ms |
-| vmap × 100, NL + jit | — | ~50 ms total (0.5 ms/pose) |
-
-## Bit-exact parity vs upstream
-
-20/20 score terms forward-match upstream goldens on 1ubq to machine
-precision; gradients match central finite-difference of upstream's own
-forward to ~1e-9 in float64. See [PARITY.md](PARITY.md).
-
-We also found one real upstream gradient bug along the way (`lk_bridge_uncpl`
-at sp2 backbone-O acceptors) — jtmol returns the mathematically correct
-derivative; see [UPSTREAM_BUG_LK_BRIDGE_UNCPL.md](UPSTREAM_BUG_LK_BRIDGE_UNCPL.md).
+20/20 score channels forward-match upstream goldens on 1ubq to
+machine precision. Gradients match central finite-difference of
+upstream's own forward to ~1e-9 in float64 on every term. Along the
+way we found one upstream gradient bug at sp2 backbone-O acceptors
+for `lk_bridge_uncpl` — jtmol returns the mathematically correct
+derivative; see
+[UPSTREAM_BUG_LK_BRIDGE_UNCPL.md](UPSTREAM_BUG_LK_BRIDGE_UNCPL.md).
+Full per-term table: [PARITY.md](PARITY.md).

@@ -1,9 +1,10 @@
-# tmol_jax Architecture
+# Architecture
 
-`tmol_jax` is a pure-JAX port of upstream [tmol](https://github.com/uw-ipd/tmol),
-replacing PyTorch + custom C++/CUDA kernels with idiomatic JAX (`jit`, `vmap`,
-`lax.scan`, `jax.grad`). No C/C++ extensions: gradients come from `jax.grad`
-instead of hand-written backward kernels.
+`tmol_jax` is the pure-JAX port of upstream [tmol](https://github.com/uw-ipd/tmol).
+PyTorch and the custom C++/CUDA kernels are replaced with `jit`,
+`vmap`, `lax.scan`, and `jax.grad`. There are no C/C++ extensions and
+no hand-written backward kernels; gradients come from `jax.grad` on
+the forward.
 
 ## Package layout
 
