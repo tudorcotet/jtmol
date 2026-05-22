@@ -30,6 +30,20 @@ from tmol_jax.score.extra.dfire import (
 )
 
 
+def _import_loss_term(name):
+    """Lazy import for the LossTerm wrappers; avoids dragging
+    examples/integration_mosaic_hallucinator into every import."""
+    from tmol_jax.score.extra import losses
+    return getattr(losses, name)
+
+
+def __getattr__(name):
+    if name in {"SS99Loss", "TransCompLoss", "BUHLoss",
+                "PRODIGYLoss", "DFIRELoss"}:
+        return _import_loss_term(name)
+    raise AttributeError(name)
+
+
 __all__ = [
     "ss99_energy",
     "ss99_dG_complex",
@@ -42,4 +56,10 @@ __all__ = [
     "transcomp_kon_ratio",
     "dfire_energy",
     "make_placeholder_dfire_table",
+    # LossTerm wrappers (lazy):
+    "SS99Loss",
+    "TransCompLoss",
+    "BUHLoss",
+    "PRODIGYLoss",
+    "DFIRELoss",
 ]

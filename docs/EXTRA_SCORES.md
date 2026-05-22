@@ -214,9 +214,13 @@ loss = (
 )
 ```
 
-(`LossTerm` wrappers for these score functions are not yet committed;
-the score functions themselves are in `tmol_jax.score.extra` and can
-be used directly inside any `eqx.Module` loss class.)
+The `LossTerm` wrappers (`SS99Loss`, `TransCompLoss`, `BUHLoss`,
+`PRODIGYLoss`, `DFIRELoss`) live in
+[`tmol_jax/score/extra/losses.py`](../tmol_jax/score/extra/losses.py).
+They take the same atom37-coords convention as `TmolInterfaceLoss`
+and compose via `+` / `*` with mosaic losses; lift back to the
+tmol_jax flat layout internally via the `_atom37_map` /
+`_atom37_is_mapped` mapping built by `build_pose_stack_template`.
 
 ## References
 
