@@ -10,7 +10,7 @@ existing iPTM / PAE / pLDDT pressure.
 This guide assumes:
 * you have mosaic installed and a working hallucination script (e.g.
   the [Nick Boyd gist](https://gist.github.com/nboyd/7b30c4033f834fc532a106d902fbdffa) hallucinator),
-* you have `jtmol` installed (`pip install -e .` from this repo).
+* you have `jtmol` installed (`uv pip install -e .` or `pip install -e .` from this repo).
 
 ## 1. The three loss terms
 

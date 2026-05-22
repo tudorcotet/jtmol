@@ -1,69 +1,79 @@
-# Port Notes
+# Gaps and design choices vs upstream tmol
 
-One-shot, 30-parallel-agent port from `tmol` (PyTorch + C++/CUDA) to
-pure JAX. Gradients come from `jax.grad` rather than hand-written
-backward kernels. The following deliberate simplifications keep the
-port tractable; each is recoverable later and none changes the public
-API surface.
+Most of the upstream tmol surface is ported. This page tracks the
+deliberate omissions, behavioural differences, and places where jtmol
+gives a different answer than upstream (and why).
 
-## Chemistry
+## What is fully ported
 
-- **Variant patching in `PatchedChemicalDatabase` is simplified.**
-  Upstream's `do_patch` / `RestypeGraphBuilder` pipeline uses
-  `networkx` + `pysmiles` graph isomorphism. We skip it and emit one
-  `RefinedResidueType` per raw residue, passing `variants` through
-  untouched. N-/C-terminal variants are not auto-applied.
-- **`ParameterDatabase.create_stable_subset` raises
-  `NotImplementedError`**; it depends on the skipped patch pipeline.
-  Use `ParameterDatabase.get_default()`.
+- All 20 energy channels of `beta_nov2016_cart` — forward bit-exact on
+  the multi-PDB panel (see [PARITY.md](PARITY.md))
+- Gradient parity via `jax.grad`, with custom-JVP rules at the cubic-
+  Hermite kinks (omega, cart_torsions, cart_hxltorsions) so we match
+  upstream's hand-written CUDA adjoints
+- Pose / PoseStack / PackedBlockTypes (JAX pytrees)
+- ChemicalDatabase + PatchedChemicalDatabase (verbatim YAML import,
+  N-/C-terminal variant auto-detection)
+- KinForest + forward_kin / inverse_kin via `lax.scan`
+- L-BFGS Cartesian and kinematic minimization (strong-Wolfe line
+  search)
+- FastRelax (ramped fa_rep schedule wrapping pack + min)
+- Rotamer packer (direct Metropolis-MC over jitted score function)
+- PDB read/write, canonical atom ordering
+- Inter-residue cart_bonded subgraphs (lengths, angles, torsions,
+  impropers, hxltorsions across peptide bonds)
+- Exact Floyd-Warshall APSP on the residue-connection graph for
+  count-pair (`path_length > 4 → 1.0`, `== 4 → 0.2`, `< 4 → 0`)
 
-## Kinematics
+## Where jtmol gives a different answer
 
-- **Generational scan ordering is degenerate.** Upstream partitions
-  the `KinForest` into depth-indexed generations for a GPU
-  segmented-scan kernel. Our `forward_kin` / `inverse_kin` run under
-  `lax.fori_loop`, which is sequential anyway, so the default emits
-  one generation containing every atom in index order. Correctness is
-  preserved by the `parent[i] < i` invariant. A full `get_scans` port
-  is included but unused.
-- **Block-type scan-path annotation is not ported.**
-  `_annotate_block_type_with_gen_scan_path_segs` and the per-block
-  weaving into a whole-PoseStack KinForest are future work.
+### `lk_bridge_uncpl` gradient at sp2 backbone-O acceptors
 
-## Scoring
+jtmol's gradient matches central finite-difference of upstream's own
+forward to ~1e-9. Upstream's hand-written CUDA adjoint
+(`LKBallPoseScoreOp::backward`) disagrees by up to ~0.16 kcal/mol/Å at
+the affected atoms. Full reproducer in
+[UPSTREAM_BUG_LK_BRIDGE_UNCPL.md](UPSTREAM_BUG_LK_BRIDGE_UNCPL.md). We
+keep the mathematically correct gradient.
 
-- **Inter-residue cart-bonded terms are omitted.** Only intra-residue
-  lengths / angles / torsions / impropers / hxltorsions are evaluated.
-- **Dunbrack binary library parsing is skipped.** If the binary
-  `.lib` is not loadable, the Dunbrack terms fall back to no-op.
-  Math uses simplified bilinear/trilinear interpolation over
-  pre-evaluated probability grids rather than cubic B-splines.
-- **LK-ball may degrade to plain LK iso.** `place_waters_for_atom`
-  places waters along the averaged lone-pair direction rather than
-  upstream's sp2/sp3/ring-specific canonical torsions. The
-  `lk_ball_pair` core is faithful; the water geometry is approximate.
+### Dunbrack rotdev / semirot bicubic interpolation
 
-## Packing
+Upstream uses Thévenaz–Blu–Unser bicubic B-splines for the chi
+mean/sigma tables (rotdev) and the 3D (φ, ψ, χ_last) log-probability
+table (semirot). jtmol uses bilinear interpolation. Forward residual is
+< 0.4% on 1ubq; gradient max|dg| ≈ 2.7e-4. Switching to bicubic is a
+self-contained future improvement.
 
-- **The rotamer packer is simplified Metropolis-MC.** Upstream runs
-  DEE + simulated annealing with precomputed rotamer-pair energy
-  tables and an incremental interaction graph in C++/CUDA. We do
-  per-step whole-pose scoring under a JAX-jitted score function:
-  more work per step, but pure JAX.
-- **No Dunbrack rotamer library sampling.** Chi angles come from
-  each residue type's static `chi_samples`; absent those, the packer
-  degenerates to the identity pose.
+## Where the rest of the runtime is intentionally different from upstream
 
-## External bridges
+- **No C++/CUDA extensions, anywhere.** Gradients come from `jax.grad`
+  on the pure-Python forward. Custom JVPs only at cubic-Hermite kinks
+  for parity with upstream's hand-coded adjoints — never to invent new
+  physics.
+- **No PyTorch at runtime.** Only `scripts/convert_binary_tables.py`
+  uses torch, to regenerate `dunbrack.npz` etc. from upstream's legacy
+  `.zip`/`.bin`. Pre-computed `.npz` tables ship in the package.
+- **Generational KinForest scan is degenerate.** Upstream partitions
+  the kin tree into depth-indexed generations for a GPU segmented-scan
+  kernel. We use `lax.fori_loop` over the existing `parent[i] < i`
+  invariant — same result, simpler code, slightly slower for
+  hand-tuned multi-kchain trees. A full `get_scans` port is present
+  but unused.
 
-- **OpenFold / RF2 / other ML bridges may stub to
-  `NotImplementedError`.** Out of scope for the first port.
+## Out of scope (for now)
 
-## Numerical fidelity
+- OpenFold / RF2 ML bridges from upstream are not ported.
+- Upstream's interaction-graph cached rotamer-pair energies (the DEE +
+  precomputed-pair-energy machinery underneath upstream's packer). Our
+  packer scores the whole pose each step under jit — correct but
+  slower per Metropolis trial than upstream.
 
-Numerical equivalence with upstream tmol has **not** been bit-for-bit
-validated. The implementation matches the mathematical forms in the
-C++ headers (LJ shift + cubic-Hermite fade, sigmoidal dielectric,
-hbond 11th-degree bounded polynomials, cart-bonded kernels) and uses
-the upstream YAML parameters verbatim; cross-validation against
-PyTorch tmol is future work.
+## Things that are *not* ports but additions
+
+- **Per-term `LossTerm` wrappers** for mosaic /
+  [Boltz-2](https://github.com/jwohlwend/boltz) protein hallucination —
+  see [MOSAIC_INTEGRATION.md](MOSAIC_INTEGRATION.md).
+- **Neighbor-list fast path** with cell-list pair enumeration
+  (6× faster, 13× smaller memory vs dense on 1ubq).
+- **`jax.vmap` over a pose-stack batch dim** for batched scoring /
+  gradient evaluation.

@@ -73,8 +73,10 @@ Score function covers all 20 energy channels (LJ/LK, elec, hbond, rama, dunbrack
 
 ## Bit-exact parity vs upstream
 
-20/20 score terms match upstream goldens on 1UBQ:
-- 17 terms bit-exact (< 0.01%)
-- 3 terms < 0.01 kcal/mol absolute delta (cart_lengths 0.004%, hbond being tightened)
+20/20 score terms forward-match upstream goldens on 1ubq to machine
+precision; gradients match central finite-difference of upstream's own
+forward to ~1e-9 in float64. See [PARITY.md](PARITY.md).
 
-See [PARITY.md](PARITY.md).
+We also found one real upstream gradient bug along the way (`lk_bridge_uncpl`
+at sp2 backbone-O acceptors) — jtmol returns the mathematically correct
+derivative; see [UPSTREAM_BUG_LK_BRIDGE_UNCPL.md](UPSTREAM_BUG_LK_BRIDGE_UNCPL.md).
