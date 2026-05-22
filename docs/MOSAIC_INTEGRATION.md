@@ -164,7 +164,75 @@ are equivalent to changing the learning rate. The reproducer is in
 [`examples/demo_steering.py`](../examples/demo_steering.py); run it
 on whatever target you care about before you commit to a sweep grid.
 
-## 4. Ranking-time full physics
+## 4. Affinity tuning (different regime, different recipe)
+
+The recipe above is for de novo binder hallucination, where Boltz-2 is
+still figuring out the binding pose and we don't want the physics loss
+to outweigh the ML structure-prediction signal. For affinity tuning of
+an existing binder the regime flips: we trust the pose, so we want
+physics to *dominate* and ML to *anchor*. Two changes from the recipe
+in §2:
+
+```python
+# 10× higher physics scale; physics is now the dominant signal.
+tmol_affinity = TmolInterfaceLoss(
+    ps_tpl,
+    term_weights={"fa_elec": 2.0, "hbond": 2.0},  # tune per contact chemistry
+    scale=1e-2,
+    binder_chain_id=0,
+)
+
+sp_loss = (
+    # Light ML pressure — Boltz-2 already has the pose, just don't let it drift.
+    0.1   * sp.IPTMLoss()
+    + 0.05 * sp.BinderTargetPAE()
+    + 0.05 * sp.TargetBinderPAE()
+    + 5.0  * InverseFoldingSequenceRecovery(mpnn, ...)
+    # Heavy physics pressure — this drives the mutations.
+    + 1.0  * tmol_affinity
+    + 0.1  * TmolBackboneLoss(ps_tpl, scale=1e-3)
+    + 0.01 * TmolClashFilter(ps_tpl, scale=1e-2)
+)
+```
+
+Per-term weights actually matter here. For initial design they just
+rescaled the gradient (§3); for affinity tuning the per-term boost
+changes which contact-type the gradient suggests mutating first.
+Picking the boost based on the interface chemistry:
+
+| Interface chemistry | `term_weights` |
+|---|---|
+| Salt-bridge / polar-heavy | `{"fa_elec": 3.0, "hbond": 2.0}` |
+| Hydrophobic burial / shape complementarity | `{"fa_ljatr": 2.0, "fa_lk": 1.5}` |
+| Hbond-network (e.g. CDR-H3 ladders) | `{"hbond": 3.0}` |
+| Water-mediated polar | `{"lk_ball": 2.0, "lk_bridge": 2.0}` |
+
+### Pre-mosaic step: hot-residue identification
+
+Before running the mosaic loop, identify which residues are
+thermodynamically sensitive at the current pose. One `jax.grad` call
+on `TmolInterfaceLoss` gives you `∂dG/∂atom37`; aggregate to
+per-residue norm and the top-N are your mutation candidates. See
+[`examples/demo_affinity_tuning.py`](../examples/demo_affinity_tuning.py)
+for the script.
+
+The per-term gradient breakdown at each hot residue tells you *what
+kind* of mutation each position wants:
+
+* Large `fa_ljrep` contribution → the residue is clashing; mutate to
+  a smaller side chain (ALA / GLY / SER).
+* Large `hbond` or `fa_elec` contribution → unfulfilled polar contact
+  / electrostatic mismatch; mutate to introduce a donor/acceptor or
+  flip charge.
+* Large `fa_ljatr` / `fa_lk` contribution → the residue is in a good
+  shape contact already; either leave alone or mutate to a closely
+  iso-steric residue (ILE↔LEU, VAL↔ALA-ish).
+
+This collapses 19×N saturation-mutagenesis into one backward pass +
+focused mutation scans on the top-3 hot residues, instead of the full
+grid.
+
+## 5. Ranking-time full physics
 
 At the post-design reprediction step, use the full beta_nov2016 score
 function instead of just the interface term:
@@ -193,7 +261,7 @@ This gives the ranker a physics-correctness signal, so designs that
 look great to the ML model but have hidden geometric issues (clashes,
 broken bonds) get penalized at selection time.
 
-## 5. Cost overhead
+## 6. Cost overhead
 
 jtmol adds a small fixed cost per Boltz-2 step:
 
@@ -206,7 +274,7 @@ jtmol adds a small fixed cost per Boltz-2 step:
 So jtmol is rounding error compared to Boltz-2; physics-augmented
 design has the same wall-clock as the vanilla mosaic loop.
 
-## 6. Parity guarantees
+## 7. Parity guarantees
 
 jtmol is parity-verified against upstream PyTorch tmol:
 
@@ -220,7 +288,7 @@ jtmol is parity-verified against upstream PyTorch tmol:
 * **Multi-chain:** matches upstream on 1cgi, 7opb, 2oob; refuses 1BL8
   with the same error message as upstream.
 
-## 7. Open knobs
+## 8. Open knobs
 
 | Knob | Where | Default | When to change |
 |---|---|---|---|
@@ -229,7 +297,7 @@ jtmol is parity-verified against upstream PyTorch tmol:
 | `binder_chain_id` | `TmolInterfaceLoss(...)` | `0` | for multi-binder designs |
 | `use_neighbor_list` | (set on the score function) | True | set False for small systems where dense is faster |
 
-## 8. References
+## 9. References
 
 * jtmol parity table: `docs/UPSTREAM_PARITY.md`
 * Why JAX port: `docs/WHY_JAX.md`
