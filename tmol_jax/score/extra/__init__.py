@@ -18,8 +18,16 @@ Currently included:
 """
 
 from tmol_jax.score.extra.ss99 import ss99_energy, ss99_dG_complex
-from tmol_jax.score.extra.buh import buh_score, buh_per_kA2
+from tmol_jax.score.extra.buh import (
+    buh_score, buh_per_kA2, hbond_satisfaction_from_coords,
+)
 from tmol_jax.score.extra.prodigy import prodigy_dG, prodigy_contact_counts
+from tmol_jax.score.extra.transcomp import (
+    transcomp_log_kon_enhancement, transcomp_kon_ratio,
+)
+from tmol_jax.score.extra.dfire import (
+    dfire_energy, make_placeholder_dfire_table,
+)
 
 
 __all__ = [
@@ -27,6 +35,11 @@ __all__ = [
     "ss99_dG_complex",
     "buh_score",
     "buh_per_kA2",
+    "hbond_satisfaction_from_coords",
     "prodigy_dG",
     "prodigy_contact_counts",
+    "transcomp_log_kon_enhancement",
+    "transcomp_kon_ratio",
+    "dfire_energy",
+    "make_placeholder_dfire_table",
 ]

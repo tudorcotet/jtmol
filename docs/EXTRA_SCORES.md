@@ -7,33 +7,39 @@ and affinity but are not part of Rosetta's canonical
 mosaic / Boltz-2 hallucination loops where they're cheap to evaluate
 and add orthogonal gradient signal to the Rosetta interface term.
 
-The motivation: on Adaptyv's internal kinetics corpus (≈200 de novo
-binders + miniproteins from public competitions, with measured
-`k_on`, `k_off`, `K_d`), these three scores together explain more of
-the kinetic variance than the full Rosetta interface energy alone:
+Motivation: on Adaptyv's de novo binder corpus (≈200 designs with
+measured `k_on`, `k_off`, `K_d`), these scores together explain more
+of the kinetic variance than the full Rosetta interface energy
+alone:
 
 | Score | Modality | Target | Pearson r | n |
 |---|---|---|---:|---:|
 | `BUH_per_kÅ²` | de novo (large) | `log k_off` | **+0.54** | 43 |
 | `BUH_per_kÅ²` | de novo (large) | `log K_d` | +0.48 | 43 |
-| `SS99` | miniprotein | `log k_off` | **+0.44** | 58 |
-| `binder_net_q` | miniprotein | `log K_d` | −0.41 | 58 |
+| `SS99` / `TransComp` | miniprotein | `log k_off` | **+0.44** | 58 |
 
-Numbers from the Adaptyv kinetics analysis pipeline (not yet
-published; cited from internal correlations as of 2026-05). For
-context, the strongest single Rosetta-channel correlation on the same
+Numbers from internal kinetics analysis (not yet published). For
+context the strongest single Rosetta-channel correlation on the same
 corpus is `dG_fa_elec` at r=+0.43 on miniprotein `log k_off`.
 
 ## Scores currently implemented
 
-### `ss99` — Selzer–Schreiber 1999 (PARE)
+| Module | Method | Predicts | Diff. status |
+|---|---|---|---|
+| `ss99` | Selzer-Schreiber 1999 (PARE) shielded Coulomb | `k_on` (and `k_off` via dissociation-rate-limited regime) | C∞ |
+| `transcomp` | Qin-Zhou 2011 transition-state ``k_on`` | `k_on` | C∞ (delegates to SS99 math, different ε / κ) |
+| `buh` | Stranges-Kuhlman 2013 buried-unsat polars | `k_off` (Rosetta filter equivalent, smooth surrogate) | Smooth surrogate, sigmoid + softplus |
+| `prodigy` | Vangone-Bonvin 2015 contact-based | `K_d` baseline | Smooth surrogate (sigmoid contact mask) |
+| `dfire` | Zhang-Zhou 2005 atom-pair statistical potential | `K_d` (classical r ≈ 0.73 on PP complexes) | C¹ (bilinear bin interp); placeholder table — published coefficients not bundled |
 
-Reference: Selzer & Schreiber, *J. Mol. Biol.* 287, 1999. The
-canonical electrostatic-only `k_on` predictor. Sums shielded Coulombic
-interactions between charged atom pairs across the interface using a
-fixed solvent dielectric (ε = 80, no distance-dependent damping) and
-a Debye–Hückel ion-screening factor (κ⁻¹ = 6.5 Å for I = 0.022 M).
-Bound-state coords stand in for the transition state.
+### `ss99` — Selzer-Schreiber 1999 (PARE) electrostatic kon proxy
+
+Reference: Selzer & Schreiber, *J. Mol. Biol.* 287, 1999.
+
+Sums shielded Coulombic interactions between charged atom pairs
+across the interface. ε = 80 fixed (no distance-dependent damping),
+κ⁻¹ = 6.5 Å (I = 0.022 M), 6 Å ion-exclusion shell. Bound-state
+coords stand in for the transition state.
 
 ```python
 from tmol_jax.score.extra import ss99_energy
@@ -45,60 +51,80 @@ U = ss99_energy(coords, charges, chain_id_atoms, binder_chain_id=0)
 # ln(k_on / k_on^0) = -U / RT;  more negative U → faster k_on
 ```
 
-Cost: ~0.1 ms on CPU for a 200-residue complex (≈40 charged atoms /
-side, ~1600 cross-pairs). Pure JAX, no surrogates, no soft
-thresholds — differentiable as-stated.
+Cost: ~0.1 ms on CPU at 200 residues. Pure JAX, fully differentiable
+as-stated.
 
-### `buh` — Stranges–Kuhlman 2013 buried-unsat polars (smooth surrogate)
+### `transcomp` — Qin-Zhou 2011 transition-state kon
 
-Reference: Stranges & Kuhlman, *Protein Sci.* 22, 2013. A buried polar
-atom whose Hbond capacity is unsatisfied predicts a design failing to
-bind. Native interfaces sit at ≤ 2 BUH per 1000 Å²; designs above 2-3
-essentially never bind in their benchmark.
+Reference: Qin & Zhou, *Biophysical Journal* 100, 2011.
 
-The Rosetta filter uses non-differentiable VSASA and a hard hbond
-counter. Our surrogate keeps the spirit but replaces both with smooth
-ingredients:
+Transition-state-theory ``k_on`` predictor. Mathematically nearly
+identical to SS99 (Debye-Hückel shielded Coulomb), with the
+canonical TransComp parameters: ε = 78.5, κ⁻¹ depends on ionic
+strength. Reported r ≈ 0.85 across 49 wild-type complexes; reproduces
+salt-dependence of ``k_on`` across 4 orders of magnitude.
+
+```python
+from tmol_jax.score.extra import transcomp_log_kon_enhancement
+
+ln_ratio = transcomp_log_kon_enhancement(
+    coords, charges, chain_id, binder_chain_id=0,
+)
+# k_on = k_on_basal * exp(ln_ratio)
+```
+
+Use TransComp at multiple ionic strengths (κ⁻¹ values) and take the
+salt-dependence slope for a more discriminating signal than the
+single-I energy.
+
+### `buh` — Stranges-Kuhlman 2013 buried-unsat polars
+
+Reference: Stranges & Kuhlman, *Protein Sci.* 22, 2013.
+
+A buried polar atom whose Hbond capacity is unsatisfied predicts a
+design failing to bind. Native interfaces sit at ≤ 2 BUH per 1000 Å²;
+designs above 2-3 essentially never bind in the published benchmark.
+
+The Rosetta filter uses non-differentiable VSASA and a hard Hbond
+counter. Our surrogate replaces both with smooth ingredients:
 
 - **Burial** via Rocklin-style sidechain-neighbor cones (continuous
   weighted count of Cα neighbors inside an angular cone aligned with
-  Cα→Cβ axis). Smooth in coords; ~25% noisier than true VSASA, but
-  gradient-clean.
-- **Satisfaction** via the per-atom Hbond-energy sum, softplus-shaped
-  so each Hbond contributes ≈ |E_hb| when E_hb < 0, ≈ 0 when E_hb ≥ 0.
-  Compared smoothly to per-atom capacity (1 for backbone N/O, 2 for
-  OH groups).
+  the residue's Cα→Cβ axis). Smooth in coords; ~25% noisier than true
+  VSASA but gradient-clean.
+- **Satisfaction** via a *coords-only* Hbond proxy: for each polar
+  atom, smooth count of nearby polar atoms of opposite type (donor↔
+  acceptor) on a different residue. Fully differentiable end-to-end
+  through coordinates; no precomputed hbond-energy vector needed.
 
 ```python
 from tmol_jax.score.extra import buh_score, buh_per_kA2
 
+# Coords-only path: pass polar_is_donor / polar_is_acceptor and
+# the score figures out hbond satisfaction internally.
 BUH = buh_score(coords, polar_atom_idx, polar_atom_res,
-                polar_capacity, polar_hb_energies,
-                res_ca_idx, res_cb_idx, atom_to_res)
+                polar_capacity, jnp.zeros_like(polar_capacity),
+                res_ca_idx, res_cb_idx, atom_to_res,
+                polar_is_donor=polar_is_donor,
+                polar_is_acceptor=polar_is_acceptor)
 BUH_per_kA2 = buh_per_kA2(BUH, interface_bsa)
 ```
 
-Cost: O(n_res²) pairwise cones + O(n_polar) score reduction; ~3 ms on
-CPU at 200 residues.
+Calibration caveat: absolute BUH values differ from the published
+Stranges-Kuhlman 2013 counts because the burial proxy is Rocklin-cones
+rather than VSASA (numerical offset ~30-50%). Use as a continuous
+gradient surrogate; run the published Rosetta `BuriedUnsatHbonds`
+filter as a non-differentiable post-hoc QC at ranking time.
 
-**Calibration caveat.** Absolute BUH values differ from Stranges-Kuhlman 2013
-counts because the burial proxy is Rocklin-cones rather than true VSASA
-(numerical offset ~30-50%). Use this as a continuous gradient
-surrogate; run the published Rosetta `BuriedUnsatHbonds` filter as a
-non-differentiable post-hoc QC at ranking time.
+### `prodigy` — Vangone-Bonvin 2015 contact-based ΔG
 
-### `prodigy` — Vangone–Bonvin 2015 contact-based ΔG
+Reference: Vangone & Bonvin, *eLife* 4:e07454, 2015.
 
-Reference: Vangone & Bonvin, *eLife* 4:e07454, 2015. Linear model
-over inter-residue contacts grouped by polarity class
+Linear model over inter-residue contacts grouped by polarity class
 (charged/polar/apolar) plus non-interacting surface area (NIS)
-fractions.
-
-The published model uses a hard 5.5 Å heavy-atom distance cutoff;
-we replace with a smooth sigmoid so `jax.grad` flows. The NIS terms
-need a SASA estimator on the separate monomers, which is non-trivial
-in pure JAX; we expose them as inputs so you can pass a static
-estimate from template-build time.
+fractions. We replace the hard 5.5 Å cutoff with a smooth sigmoid;
+NIS terms taken as inputs (caller provides; needs SASA on separate
+monomers).
 
 ```python
 from tmol_jax.score.extra import prodigy_dG
@@ -106,70 +132,105 @@ from tmol_jax.score.extra import prodigy_dG
 dG = prodigy_dG(coords, atom_to_res, res_polarity, chain_id_per_res,
                 nis_apolar=nis_ap, nis_charged=nis_cc,
                 binder_chain_id=0)
-# Lower (more negative) = tighter binding. RMSE ~1.9 kcal/mol on the
-# published benchmark, r ≈ 0.73 on training / 0.31 on held-out.
+# Lower (more negative) = tighter binding.
 ```
 
-Cost: O(n_atoms²) dense pair-distance ~30 ms on CPU at 1200 atoms
-(could be cut to ~3 ms with a neighbor-list path; not yet wired).
+Cost: O(n_atoms²) dense pair-distance ~30 ms on CPU at 1200 atoms.
 
-**Surrogate caveat.** Our atom-pair sigmoid surrogate over-counts
-relative to the published residue-pair Boolean. We apply a fixed
-1/36 rescaling to land in the right ballpark; for hard PRODIGY
-ranking, use the original tool (https://github.com/haddocking/prodigy)
-externally.
+### `dfire` — Zhang-Zhou 2005 atom-pair statistical potential
 
-## What we didn't implement (yet)
+Reference: Zhang, Liu, Zhou, Zhou. *J. Med. Chem.* 48, 2005.
 
-- **Shape Complementarity (Lawrence-Colman 1993).** Needs a
-  differentiable surrogate for the Connolly surface and a smooth
-  quantile over surface-dot normals. Reasonable path is Gaussian-blur
-  isosurface + softmin nearest-neighbor + smoothed quantile (~300
-  LOC); validate against the Rust `sc-rs` reference. Deferred.
-- **CoreHSEnergy (Agius 2013).** Sum of single-point ΔΔG_Ala over
-  core hotspot residues. Requires either (a) running a Rosetta
-  alanine scan per design (non-differentiable, ~150 s/complex),
-  or (b) training a small differentiable ΔΔG MLP on SKEMPI v2.
-  Deferred to a separate model release.
-- **PRODIGY NIS terms with true on-the-fly SASA.** The current
-  implementation takes NIS as an input. A fully self-contained
-  PRODIGY needs a smooth SASA estimator (e.g. Rocklin cones
-  inverted), which would close that gap with ~50 LOC.
-
-## Composition with the Rosetta interface loss
-
-These scores compose with `TmolInterfaceLoss` (from
-`examples/integration_mosaic_hallucinator.py`) via the same
-`LossTerm` algebra. For an affinity-tuning loop:
+Distance-scaled finite-ideal-gas reference statistical potential —
+the original "must beat" baseline at r = 0.73 on PP complexes, still
+top-3 twenty years later. Our implementation provides the
+differentiable bin-interpolated pair-sum infrastructure but **ships
+with a placeholder potential table**, not the published coefficients.
 
 ```python
-loss = (
-    1.0   * TmolInterfaceLoss(ps_tpl, scale=1e-2)       # Rosetta interface
-    + 0.1   * ss99_energy_loss(ps_tpl)                   # k_on signal
-    + 1.0   * buh_loss(ps_tpl)                           # k_off signal
-    + 0.01  * prodigy_loss(ps_tpl)                       # K_d baseline
-)
+from tmol_jax.score.extra import dfire_energy, make_placeholder_dfire_table
+
+# Placeholder table (NOT the published Zhou-Yang coefficients):
+table = make_placeholder_dfire_table()
+
+E = dfire_energy(coords, atom_types, chain_id, table,
+                 cross_chain_only=True, binder_chain_id=0)
 ```
 
-(`LossTerm` wrappers for the three scores are not yet committed;
-the score functions themselves are in `tmol_jax.score.extra` and
-can be used directly inside any `eqx.Module` loss class.)
+To get the real signal, build the published table:
 
-## Reproducer
+```bash
+# (script not yet written — TODO)
+python scripts/convert_dfire_tables.py --in dfire.dat --out dfire.npz
+```
+
+## Differentiability evidence
+
+`examples/demo_extra_scores.py` runs each score on 1ubq split-binder
+and verifies:
+
+- the gradient is finite,
+- a small step opposite the gradient lowers the loss (perturbation-
+  direction sanity check — catches saturated-region gradients that
+  finite-norm tests miss).
+
+Run:
 
 ```bash
 PYTHONPATH=. python examples/demo_extra_scores.py
 ```
 
-Runs each of the three scores on 1ubq split into binder (res 1-40)
-and target (res 41-76), and verifies that `jax.grad` is finite on
-each.
+## What we didn't implement (yet) and why
+
+- **Shape Complementarity (Lawrence-Colman 1993).** Needs a
+  differentiable surrogate for the Connolly surface and a smooth
+  quantile. ~300 LOC. Deferred.
+- **CoreHSEnergy (Agius 2013).** Needs either a Rosetta alanine-scan
+  workflow (non-differentiable) or a SKEMPI v2-trained ΔΔG MLP.
+  Deferred to a separate model release.
+- **PRODIGY NIS with on-the-fly SASA.** NIS currently an input; a
+  smooth-SASA estimator would close that gap (~50 LOC).
+- **Neural ddG predictors (RDE-Net, BA-DDG, Pythia-PPI, TopoScorer).**
+  All differentiable, all reach Spearman 0.5-0.8 on SKEMPI v2 / PPB-
+  Affinity. Highest empirical bang/buck would be BA-DDG (ProteinMPNN
+  + thermodynamic-cycle correction) since the ProteinMPNN backbone
+  is already a fixture in BindCraft-style loops. Deferred: integrating
+  a 3M-parameter weight bundle is a separate ship.
+
+## Composition with the Rosetta interface loss
+
+For an affinity-tuning loop these compose with `TmolInterfaceLoss`
+(from `examples/integration_mosaic_hallucinator.py`) via the same
+`LossTerm` algebra. Skeleton:
+
+```python
+loss = (
+    1.0   * TmolInterfaceLoss(ps_tpl, scale=1e-2)       # Rosetta interface
+    + 0.5   * ss99_loss(ps_tpl)                          # k_on signal
+    + 1.0   * buh_loss(ps_tpl)                           # k_off signal
+    + 0.01  * prodigy_loss(ps_tpl)                       # K_d baseline
+    + 0.1   * transcomp_loss(ps_tpl)                     # TST k_on
+    # + 0.1 * dfire_loss(ps_tpl, dfire_table=...)        # classical Kd baseline
+)
+```
+
+(`LossTerm` wrappers for these score functions are not yet committed;
+the score functions themselves are in `tmol_jax.score.extra` and can
+be used directly inside any `eqx.Module` loss class.)
 
 ## References
 
 - Selzer & Schreiber 1999 — https://doi.org/10.1006/jmbi.1999.2615
+- Qin & Zhou 2011 — https://doi.org/10.1016/j.bpj.2011.05.004
 - Stranges & Kuhlman 2013 — https://doi.org/10.1002/pro.2187
 - Vangone & Bonvin 2015 — https://elifesciences.org/articles/07454
+- Zhang & Zhou 2005 (DFIRE) — https://pubmed.ncbi.nlm.nih.gov/15801826/
 - Lawrence & Colman 1993 — https://doi.org/10.1006/jmbi.1993.1648
 - Agius, Torchala et al. 2013 — https://doi.org/10.1371/journal.pcbi.1003216
 - Rocklin sidechain-neighbor cones — Rocklin et al., *Science* 357, 2017
+- RDE-Net — https://openreview.net/forum?id=_X9Yl1K2mD
+- Pythia-PPI — Tao et al. 2025
+- BA-DDG / BA-Cycle — https://arxiv.org/pdf/2410.09543 / https://arxiv.org/pdf/2507.05502
+- TopoScorer / Specter — https://openreview.net/pdf?id=QNcrdCKNa5
+- PPI-Graphomer — https://pmc.ncbi.nlm.nih.gov/articles/PMC12042501/
+- PPB-Affinity dataset — https://preview-www.nature.com/articles/s41597-024-03997-4

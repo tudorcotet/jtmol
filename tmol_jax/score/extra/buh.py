@@ -139,6 +139,48 @@ def sidechain_neighbor_cone_count(
     return cone.sum(axis=-1)
 
 
+def hbond_satisfaction_from_coords(
+    coords: Float[Array, "n_atoms 3"],
+    polar_atom_idx: Int[Array, "n_polar"],
+    polar_atom_res: Int[Array, "n_polar"],
+    polar_is_donor: Float[Array, "n_polar"],
+    polar_is_acceptor: Float[Array, "n_polar"],
+    *,
+    hb_dist: float = 3.5,
+    hb_dist_tau: float = 0.25,
+) -> Float[Array, "n_polar"]:
+    """Smooth, coords-only Hbond-satisfaction estimate per polar atom.
+
+    For each polar atom ``i``, sum a smooth indicator over all OTHER
+    polar atoms ``j`` of opposite type (donor↔acceptor), of different
+    residue, within ``hb_dist`` Å. Returns a per-atom satisfaction
+    count in ``[0, k_max]``.
+
+    This is the coords-side analog of "did atom i form an Hbond?".
+    It's differentiable end-to-end because the sigmoid distance step
+    keeps gradient flow. Replaces the precomputed-Hbond-energy input
+    in the original ``buh_score`` API so the full BUH score is
+    differentiable through coords, not just burial.
+    """
+    p_xyz = coords[polar_atom_idx]
+    diff = p_xyz[:, None, :] - p_xyz[None, :, :]
+    r = _safe_norm(diff, axis=-1)
+
+    # Donor-acceptor pair mask (D↔A only, no D↔D or A↔A).
+    d_a = polar_is_donor[:, None] * polar_is_acceptor[None, :]
+    a_d = polar_is_acceptor[:, None] * polar_is_donor[None, :]
+    pair_mask = d_a + a_d
+
+    # Exclude same-residue partners.
+    diff_res = (polar_atom_res[:, None] != polar_atom_res[None, :]).astype(
+        pair_mask.dtype
+    )
+
+    smooth_hb = jax.nn.sigmoid((hb_dist - r) / hb_dist_tau)
+    sat_per_pair = smooth_hb * pair_mask * diff_res
+    return sat_per_pair.sum(axis=-1)
+
+
 def buh_score(
     coords: Float[Array, "n_atoms 3"],
     polar_atom_idx: Int[Array, "n_polar"],
@@ -151,6 +193,8 @@ def buh_score(
     *,
     burial_thresh: float = ROCKLIN_BURIAL_THRESH,
     burial_tau: float = ROCKLIN_BURIAL_TAU,
+    polar_is_donor: Float[Array, "n_polar"] = None,
+    polar_is_acceptor: Float[Array, "n_polar"] = None,
 ) -> Float[Array, ""]:
     """Differentiable buried-unsatisfied-polars score.
 
@@ -198,13 +242,27 @@ def buh_score(
     # Smooth "is buried" indicator in [0, 1].
     is_buried = jax.nn.sigmoid((polar_burial - burial_thresh) / burial_tau)
 
-    # Smooth "is satisfied". Convert Hbond energies to a satisfaction
-    # score: each Hbond contributes softplus(-E_hb) ≈ |E_hb| when
-    # E_hb < 0, ≈ 0 when E_hb >= 0. Then compare against capacity.
-    # We assume polar_atom_hbond_energies is already the sum over
-    # partners; the satisfaction is a smooth step at capacity.
-    hbond_score = jax.nn.softplus(-polar_atom_hbond_energies)
-    # Smooth indicator "satisfied" = sigmoid((hbond_score - capacity) / tau)
+    # Smooth "is satisfied". Two paths depending on what the caller
+    # provides:
+    #
+    #  (a) If ``polar_is_donor`` and ``polar_is_acceptor`` are given,
+    #      compute Hbond satisfaction from coords directly — fully
+    #      differentiable end-to-end.
+    #  (b) Otherwise use the precomputed ``polar_atom_hbond_energies``
+    #      input (back-compat with the older API). Note: in path (b)
+    #      the gradient w.r.t. coords only flows through the burial
+    #      branch; ``polar_atom_hbond_energies`` is treated as a
+    #      constant unless you compute it inside the ``jax.grad``
+    #      scope yourself.
+    if polar_is_donor is not None and polar_is_acceptor is not None:
+        hbond_score = hbond_satisfaction_from_coords(
+            coords, polar_atom_idx, polar_atom_res,
+            polar_is_donor, polar_is_acceptor,
+        )
+    else:
+        # Convert Hbond energies → soft count: each Hbond contributes
+        # softplus(-E_hb) ≈ |E_hb| when favorable.
+        hbond_score = jax.nn.softplus(-polar_atom_hbond_energies)
     is_satisfied = jax.nn.sigmoid(
         (hbond_score - polar_atom_hb_capacity) / 0.5
     )
