@@ -152,6 +152,7 @@ Boltz-2 losses via `+` / `*`.
 | [`docs/WHY_JAX.md`](docs/WHY_JAX.md) | Why we re-implemented this in JAX |
 | [`docs/PORT_NOTES.md`](docs/PORT_NOTES.md) | Gaps and behavioural differences vs upstream |
 | [`docs/MOSAIC_INTEGRATION.md`](docs/MOSAIC_INTEGRATION.md) | Use jtmol as a binding-affinity loss in mosaic / Boltz-2 |
+| [`docs/EXTRA_SCORES.md`](docs/EXTRA_SCORES.md) | Extra differentiable interface scores (SS99, BUH, PRODIGY) |
 | [`docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md`](docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md) | A real gradient bug we found in upstream, with reproducer |
 
 ## Credit / upstream
