@@ -74,7 +74,8 @@ def upstream_score_total_and_per_term(ps) -> Tuple[float, Dict[str, float]]:
     Returns ``(total_energy, {term_name: weighted_energy})``.
     """
     import torch
-    from tmol import beta2016_score_function
+    from tmol import beta2016_score_function, ParameterDatabase
+    from tmol.score.score_function import ScoreFunction
     from tmol.score.score_types import ScoreType
 
     sfxn = beta2016_score_function(torch.device("cpu"))
@@ -83,31 +84,27 @@ def upstream_score_total_and_per_term(ps) -> Tuple[float, Dict[str, float]]:
     weighted = scorer(coords)  # [n_poses]
     total = float(weighted.sum().item())
 
-    # Per-term breakdown using one term at a time. This matches the
-    # approach used by run_upstream_parity.py.
+    # Per-term breakdown using one term at a time. We can't go through
+    # ``set_weight(st, 0.0)`` for the inactive terms because that path
+    # calls ``remove_term_for_score_type`` (which is a TODO upstream).
+    # Instead we build a *fresh* ScoreFunction (weights all 0 by
+    # construction), enable only the target term with unit weight, and
+    # multiply the resulting energy by the reference beta_nov2016 weight.
+    ref_sfxn = beta2016_score_function(torch.device("cpu"))
+    ref_w = ref_sfxn._weights  # torch.Tensor[ScoreType.n_score_types.value]
     per_term: Dict[str, float] = {}
     for st in list(ScoreType):
         if st is ScoreType.n_score_types:
             continue
         try:
-            one_sfxn = beta2016_score_function(torch.device("cpu"))
-            # Zero all then set one
-            for st_inner in list(ScoreType):
-                if st_inner is ScoreType.n_score_types:
-                    continue
-                one_sfxn.set_weight(st_inner, 0.0)
-            # Apply the original beta_nov2016 weight (so we report a
-            # comparable weighted energy)
-            ref_sfxn = beta2016_score_function(torch.device("cpu"))
-            w = ref_sfxn.weights_tensor()
-            # Map each ScoreType to its weight: get the index by iterating.
-            # Easier: just call score_by_term then multiply by weight.
+            one_sfxn = ScoreFunction(
+                ParameterDatabase.get_default(), torch.device("cpu")
+            )
             one_sfxn.set_weight(st, 1.0)
             one_scorer = one_sfxn.render_whole_pose_scoring_module(ps)
             unw = float(one_scorer(coords).sum().item())
-            # Look up the corresponding weight in the reference sfxn.
-            ref_w = ref_sfxn._weights.get(st.value, 0.0)
-            per_term[st.name] = ref_w * unw
+            w = float(ref_w[st.value].item())
+            per_term[st.name] = w * unw
         except Exception as exc:  # pragma: no cover - best-effort report
             per_term[st.name] = float("nan")
             print(f"  warn: upstream term {st.name} failed: {exc}")
@@ -166,11 +163,14 @@ def upstream_summary(ps) -> Dict[str, Any]:
             continue
         bt_names.append(pbt.active_block_types[int(bi)].name)
 
+    # Preserve order of first appearance so the chain table aligns
+    # naturally with the per-residue layout.
     chains: Dict[int, int] = {}
     for i, ci in enumerate(chain_id):
         if not real_mask[i]:
             continue
-        chains[int(ci)] = chains.get(int(ci), 0) + 1
+        key = int(ci)
+        chains[key] = chains.get(key, 0) + 1
 
     # Count peptide-bond connections that actually point to a real
     # residue (irc[i, c, 0] != -1).
@@ -210,16 +210,20 @@ def jax_summary(ps) -> Dict[str, Any]:
             continue
         bt_names.append(pbt.active_block_types[int(bi)].name)
 
-    # Chain id: tmol_jax stores per-residue chain in pdb_info.
+    # Chain id: tmol_jax stores per-residue chain string in
+    # ``pdb_info.chain_id`` (a list-of-lists ``[n_poses][n_blocks]``).
     chains: Dict[Any, int] = {}
     pdb_info = getattr(ps, "pdb_info", None)
-    if pdb_info is not None and getattr(pdb_info, "chain_labels", None) is not None:
-        chain_labels = np.asarray(pdb_info.chain_labels)
-        # shape can be [P, R] or [R]
-        if chain_labels.ndim == 2:
-            row = chain_labels[0]
+    chain_id_attr = (
+        getattr(pdb_info, "chain_id", None) if pdb_info is not None else None
+    )
+    if chain_id_attr is not None:
+        # Normalise: pdb_info.chain_id can be list-of-lists or numpy array.
+        if isinstance(chain_id_attr, (list, tuple)):
+            row = list(chain_id_attr[0]) if len(chain_id_attr) > 0 else []
         else:
-            row = chain_labels
+            arr = np.asarray(chain_id_attr)
+            row = list(arr[0] if arr.ndim == 2 else arr)
         for i in range(real_count):
             cl = row[i] if i < len(row) else "A"
             chains[str(cl)] = chains.get(str(cl), 0) + 1
@@ -441,8 +445,10 @@ def format_md(reports: List[Dict[str, Any]], bl8_report: Dict[str, Any]) -> str:
         lines.append("")
         lines.append("| Chain | upstream | tmol_jax |")
         lines.append("|---|---:|---:|")
-        all_chains_up = sorted(ups["chains"].keys(), key=lambda x: str(x))
-        all_chains_jx = sorted(jxs["chains"].keys(), key=lambda x: str(x))
+        # Preserve insertion order so chains line up by first appearance
+        # rather than collating "A" and 0 by string sort.
+        all_chains_up = list(ups["chains"].keys())
+        all_chains_jx = list(jxs["chains"].keys())
         # Show by index for parallel pairs since upstream uses ints / jax may use letters.
         max_chains = max(len(all_chains_up), len(all_chains_jx))
         for i in range(max_chains):
