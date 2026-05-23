@@ -43,12 +43,19 @@ reasons; the GitHub project / public-facing name is **jtmol**.
 ## Useful entry points
 
 ```python
+import jax
 import tmol_jax
 
 ps = tmol_jax.pose_stack_from_pdb("1ubq.pdb")
 sfxn = tmol_jax.beta2016_score_function()
 E = sfxn(ps)
-grad = tmol_jax.grad_wrt_coords(sfxn)(ps)
+
+# Gradient w.r.t. atom coordinates via jax.grad on the score function.
+state = sfxn.setup_for_pose_stack(ps)
+def energy(coords):
+    return sfxn(ps, state=state, coords_override=coords).sum()
+grad = jax.jit(jax.grad(energy))(ps.coords)
+
 ps_min = tmol_jax.run_cart_min(ps, sfxn)
 tmol_jax.write_pose_stack_pdb(ps_min, "out.pdb")
 ```

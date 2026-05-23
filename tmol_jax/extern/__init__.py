@@ -17,12 +17,6 @@ Ports included:
 * :mod:`tmol_jax.extern.pysmiles` - pure-Python SMILES reader/writer
   (depends only on :mod:`networkx`).  Used by
   :mod:`tmol_jax.chemical.patched_chemdb` for residue graph matching.
-* :mod:`tmol_jax.extern.openfold` - constants extracted from OpenFold
-  (subset of AlphaFold's ``residue_constants``).  Used by the optional
-  ``pose_stack_from_openfold`` I/O bridge.
-* :mod:`tmol_jax.extern.rosettafold2` - residue name / atom ordering
-  tables from RoseTTAFold2.  Used by the optional
-  ``pose_stack_from_rosettafold2`` I/O bridge.
 """
 
 from __future__ import annotations

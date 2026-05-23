@@ -13,8 +13,14 @@ implementation notes per score.
 
 Currently included:
 - ``ss99`` — Selzer-Schreiber 1999 (PARE) electrostatic ``k_on`` proxy
+- ``transcomp`` — Qin-Zhou 2011 transition-state ``k_on`` enhancement
 - ``buh`` — Stranges-Kuhlman 2013 buried-unsat polars (``k_off`` proxy)
-- ``prodigy`` — PRODIGY contact-based ΔG (``K_d`` baseline)
+- ``prodigy`` — Vangone-Bonvin 2015 contact-based ΔG (``K_d`` baseline)
+- ``dfire`` — Zhang-Zhou 2005 atom-pair statistical potential
+  (placeholder coefficients only; the public Zhou-Yang table is not
+  yet bundled)
+- ``kinetics_tuning`` — composite three-channel loss exposing
+  ``k_on``, ``k_off``, ``K_d`` as independent weight knobs
 """
 
 from tmol_jax.score.extra.ss99 import ss99_energy, ss99_dG_complex

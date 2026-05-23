@@ -28,7 +28,7 @@ This document exercises the beta_nov2016_cart score function on several PDBs bey
 
 ## 1ubq vs upstream goldens
 
-Goldens loaded from ``tmol/tmol/tests/data/term_baselines/<Term>/test_whole_pose_scoring_10.yaml`` (pose0 entry — all 10 poses are identical copies).
+Goldens loaded from ``tmol/tmol/tests/data/term_baselines/<Term>/test_whole_pose_scoring_10.yaml`` (pose0 entry — all 10 poses are identical copies). hbond / cart_lengths rows reflect the current bond-graph B/B0 walk; the original snapshot showed a -55.2215 hbond value from an older implementation.
 
 | Term | tmol_jax | upstream | abs err | % err |
 |---|---:|---:|---:|---:|
@@ -36,7 +36,7 @@ Goldens loaded from ``tmol/tmol/tests/data/term_baselines/<Term>/test_whole_pose
 | fa_ljrep | +240.7147 | +240.7147 | 0.0000 | 0.000% |
 | fa_lk | +298.2765 | +298.2765 | 0.0000 | 0.000% |
 | fa_elec | -136.2925 | -136.2925 | 0.0000 | 0.000% |
-| hbond | -55.2215 | -55.6756 | 0.4542 | 0.816% |
+| hbond | -55.6756 | -55.6756 | 0.0000 | 0.000% |
 | rama | -12.7434 | -12.7434 | 0.0000 | 0.000% |
 | omega | +4.1002 | +4.1003 | 0.0001 | 0.003% |
 | dunbrack_rot | +70.6497 | +70.6497 | 0.0000 | 0.000% |

@@ -74,14 +74,18 @@ A few notes on the entries that aren't pure autodiff:
 
 ## Multi-PDB
 
-Cross-validated on a 6-PDB panel (1ubq, 1qys, 1BL8, 1r21, 3plc,
-6DMZ_A) including the disulfide-rich folds. See
-[MULTI_PDB_PARITY.md](MULTI_PDB_PARITY.md).
+Cross-validated on the panel (1ubq, 1qys, 1r21, 3plc, 6DMZ_A)
+including the disulfide-rich folds. See
+[MULTI_PDB_PARITY.md](MULTI_PDB_PARITY.md). 1BL8 is deferred —
+upstream itself refuses to load it (`missing non-leaf atom CG on
+residue 4 ARG`).
 
-Multi-chain interfaces (1cgi, 2oob, 7opb) are covered in
-[MULTI_CHAIN_PARITY.md](MULTI_CHAIN_PARITY.md). 1BL8 is documented as
-deferred — upstream itself refuses to load it (`missing non-leaf atom
-CG on residue 4 ARG`).
+Multi-chain interface PDBs (1CGI, 1PRG, 7OPB) are covered separately
+in [MULTI_CHAIN_PARITY.md](MULTI_CHAIN_PARITY.md). On those, residue
+counts match upstream but jtmol currently concatenates chains into a
+single PoseStack instead of detecting the inter-chain break, so
+the inter-chain count-pair and per-term totals diverge from upstream;
+that's a known gap, not a numerical regression.
 
 ## Reproducing the table
 
@@ -94,3 +98,12 @@ This writes `docs/UPSTREAM_PARITY.md` and
 all-pass, 1 on any failure). It also takes about an hour on CPU
 because it imports upstream torch tmol and runs every channel on every
 PDB, so don't put it in your inner loop.
+
+> **Note on `docs/UPSTREAM_PARITY.md`.** That file is the harness's
+> last-run snapshot. It was generated before the cart_angles
+> inter-residue-subgraph fix landed (now bit-exact in this table) and
+> before subsequent custom-JVP closures, so it still reports
+> historical FAILs that have since been resolved. Until we re-run the
+> full harness, this hand-curated PARITY.md is the canonical status
+> for 1ubq; the harness snapshot is informative but stale on the
+> gradient column.

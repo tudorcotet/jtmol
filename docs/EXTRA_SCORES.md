@@ -31,6 +31,7 @@ corpus is `dG_fa_elec` at r=+0.43 on miniprotein `log k_off`.
 | `buh` | Stranges-Kuhlman 2013 buried-unsat polars | `k_off` (Rosetta filter equivalent, smooth surrogate) | Smooth surrogate, sigmoid + softplus |
 | `prodigy` | Vangone-Bonvin 2015 contact-based | `K_d` baseline | Smooth surrogate (sigmoid contact mask) |
 | `dfire` | Zhang-Zhou 2005 atom-pair statistical potential | `K_d` (classical r ≈ 0.73 on PP complexes) | C¹ (bilinear bin interp); placeholder table — published coefficients not bundled |
+| `kinetics_tuning` | Composite three-channel loss | `k_on`, `k_off`, `K_d` exposed as separate weight knobs | Smooth (composes the four above) |
 
 ### `ss99` — Selzer-Schreiber 1999 (PARE) electrostatic kon proxy
 
@@ -163,6 +164,36 @@ To get the real signal, build the published table:
 # (script not yet written — TODO)
 python scripts/convert_dfire_tables.py --in dfire.dat --out dfire.npz
 ```
+
+### `kinetics_tuning` — composite three-channel loss
+
+The `k_on`, `k_off`, `K_d` axes have largely disjoint hot-residue
+lists on a given complex (mutations that target one axis don't move
+the others). `KineticsTuningLoss` exposes the three axes as separate
+weight knobs so an affinity-tuning loop can decide which property to
+move:
+
+```python
+from tmol_jax.score.extra.kinetics_tuning import KineticsTuningLoss
+
+loss = KineticsTuningLoss(
+    w_kon=0.0,   # don't touch kon
+    w_koff=1.0,  # tighten koff
+    w_kd=0.5,    # while not breaking Kd
+    charges=ss99_charges, chain_id_atoms=chain_id_atoms,
+    polar_atom_idx=polar_idx, polar_atom_res=polar_res,
+    polar_capacity=polar_capacity,
+    polar_is_donor=polar_is_donor, polar_is_acceptor=polar_is_acceptor,
+    res_ca_idx=res_ca_idx, res_cb_idx=res_cb_idx,
+    atom_to_res=atom_to_res,
+    kd_fn=interface_dG_function,
+)
+```
+
+Plus `per_residue_kinetic_gradient_norms` to identify which residues
+are sensitive on each axis independently. See
+[`examples/demo_kinetics_tuning.py`](../examples/demo_kinetics_tuning.py)
+and [`examples/demo_alanine_scan_kinetics.py`](../examples/demo_alanine_scan_kinetics.py).
 
 ## Differentiability evidence
 

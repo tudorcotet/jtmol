@@ -159,11 +159,12 @@ def ss99_energy(
 
     Sums
 
-        U = Σ_{i ∈ A, j ∈ B}
+        U = 332.0637 · Σ_{i ∈ A, j ∈ B}
               (q_i q_j / (ε r_ij)) · exp(-κ (r_ij - a)) / (1 + κ a)
 
-    over all pairs where ``i`` is on the binder chain and ``j`` is
-    on a non-binder atom. Self-pairs on the same chain are excluded.
+    in kcal/mol, where 332.0637 is the Rosetta Coulomb-to-kcal/mol
+    conversion. ``i`` ranges over binder atoms and ``j`` over non-
+    binder atoms; same-chain self-pairs are excluded.
 
     Parameters
     ----------

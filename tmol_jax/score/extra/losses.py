@@ -29,49 +29,10 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, Int
 
-# Reuse the LossTerm shim from the existing mosaic integration so the
-# composition algebra and the atom37→flat plumbing both stay in one
-# place.
-try:
-    from examples.integration_mosaic_hallucinator import (
-        _BaseLoss as _LossTerm,
-    )
-except Exception:  # pragma: no cover
-    import equinox as eqx
-
-    class _LossTerm(eqx.Module):
-        def __call__(self, *args, key, **kwargs):
-            raise NotImplementedError
-
-        def __rmul__(self, s):
-            if not isinstance(s, (int, float)):
-                return NotImplemented
-            return _ScaledLoss(loss=self, scale=float(s))
-
-        def __add__(self, other):
-            return _SumLoss(losses=[self, other])
-
-    class _ScaledLoss(eqx.Module):
-        loss: Any
-        scale: float
-
-        def __call__(self, *args, key, **kwargs):
-            v, aux = self.loss(*args, key=key, **kwargs)
-            return self.scale * v, aux
-
-    class _SumLoss(eqx.Module):
-        losses: list
-
-        def __call__(self, *args, key, **kwargs):
-            r = 0.0
-            auxes = []
-            for L in self.losses:
-                v, a = L(*args, key=key, **kwargs)
-                key = jax.random.fold_in(key, 1)
-                r = r + v
-                auxes.append(a)
-            return r, auxes
-
+# In-package LossTerm base class; subclasses mosaic.common.LossTerm if
+# mosaic is installed, otherwise an in-package shim with the same
+# composition algebra. No dependency on examples/.
+from tmol_jax.score.extra._loss_base import LossTerm as _LossTerm
 
 from tmol_jax.score.extra.ss99 import ss99_energy
 from tmol_jax.score.extra.buh import buh_score, buh_per_kA2

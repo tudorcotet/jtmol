@@ -234,32 +234,14 @@ grid.
 
 ## 5. Ranking-time full physics
 
-At the post-design reprediction step, use the full beta_nov2016 score
-function instead of just the interface term:
-
-```python
-from examples.integration_mosaic_hallucinator import TmolFullAtomLoss
-
-ps_tpl_full = build_pose_stack_template(
-    sequence=designed_seq_str,
-    target_sequence=TARGET_SEQUENCE,
-)
-tmol_full = TmolFullAtomLoss(ps_tpl_full, scale=1e-3)
-
-ranking_loss = folder.build_multisample_loss(
-    loss=1.0 * sp.IPTMLoss()
-         + 0.5 * sp.TargetBinderIPSAE()
-         + 0.5 * sp.BinderTargetIPSAE()
-         + 0.1 * tmol_full,          # physics correctness check
-    features=boltz_features,
-    recycling_steps=3,
-    num_samples=6,
-)
-```
-
-This gives the ranker a physics-correctness signal, so designs that
-look great to the ML model but have hidden geometric issues (clashes,
-broken bonds) get penalized at selection time.
+At the post-design reprediction step, run the full `beta_nov2016`
+score function on the designed complex and use the total energy as
+an additional ranking signal alongside iPTM and IPSAE. The mechanics
+are the same as `TmolInterfaceLoss` (call `sfxn(ps_designed)` rather
+than the bound-minus-separated dG), just on the post-MPNN
+re-predicted structure. Penalises designs with hidden geometric
+issues (clashes, broken bonds, bad backbone geometry) that the ML
+model rated highly.
 
 ## 6. Cost overhead
 
@@ -276,17 +258,24 @@ design has the same wall-clock as the vanilla mosaic loop.
 
 ## 7. Parity guarantees
 
-jtmol is parity-verified against upstream PyTorch tmol:
+jtmol is parity-verified against upstream PyTorch tmol on 1ubq:
 
-* **Forward energy:** 20/20 score terms forward-bit-exact on 1ubq,
-  1qys (full `beta_nov2016_cart`). See `docs/UPSTREAM_PARITY.md`.
+* **Forward energy:** 20/20 score terms forward-bit-exact on 1ubq
+  (full `beta_nov2016_cart`). See `docs/PARITY.md`.
 * **Gradient:** matches central finite-difference of upstream's
-  forward to ~1e-9 in float64 across all terms. One known upstream
+  forward to ~1e-9 in float64 on every term. One known upstream
   bug at sp2 backbone-O acceptors is documented in
   `docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md`; jtmol gives the
   mathematically correct gradient there.
-* **Multi-chain:** matches upstream on 1cgi, 7opb, 2oob; refuses 1BL8
-  with the same error message as upstream.
+* **Multi-PDB and multi-chain:** snapshots in
+  `docs/MULTI_PDB_PARITY.md` and `docs/MULTI_CHAIN_PARITY.md`. The
+  multi-chain panel (1CGI, 7OPB) currently concatenates chains into
+  a single PoseStack rather than detecting the inter-chain break;
+  the residue count matches upstream (e.g. 301 on 1CGI) but the
+  internal chain topology differs. Tracked in
+  `docs/MULTI_CHAIN_PARITY.md`. 1BL8 is deferred — upstream itself
+  refuses to load it with `missing non-leaf atom CG on residue 4
+  ARG`.
 
 ## 8. Open knobs
 

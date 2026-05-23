@@ -9,8 +9,7 @@ side-chain reconstruction is intentionally out of scope -- callers that
 need it should fall back to the torch port.
 
 The primary entry point is :func:`pose_stack_from_biotite`. Helper
-getters mirror the upstream naming for symmetry with
-:mod:`pose_stack_from_openfold` / ``_rosettafold2``:
+getters mirror the upstream tmol naming convention:
 
 * :func:`canonical_ordering_for_biotite` -- the default canonical
   ordering (biotite residues are string-keyed so there is no bespoke

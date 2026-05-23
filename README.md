@@ -50,17 +50,18 @@ runtime, only optionally for regenerating binary scoring tables via
 
 ## Status
 
-On 1ubq, forward energies match upstream's per-term goldens to
-machine precision across all 20 score channels, and `jax.grad` matches
+On 1ubq, forward energies match upstream's per-term goldens across all
+20 score channels of `beta_nov2016_cart`, and `jax.grad` matches
 central finite-difference of upstream's own forward to ~1e-9 in
-float64 on every term we have ported. The multi-PDB panel (1qys,
-1r21, 3plc, 6DMZ_A) is forward-bit-exact on the channels that don't
-depend on the hbond B/B0 walk, and within ~1% on the ones that do (we
-use the bond-graph walk for now; upstream uses an icoor-tree walk on
-ring acceptors and sp3 hydroxyls). See
-[`docs/PARITY.md`](docs/PARITY.md) for the per-term table and
-[`docs/UPSTREAM_PARITY.md`](docs/UPSTREAM_PARITY.md) for the auto-
-generated harness output.
+float64. The single-chain multi-PDB panel (1qys, 1r21, 3plc, 6DMZ_A)
+matches upstream on most channels with small drifts on the rotamer
+library terms (`dunbrack_rotdev` / `dunbrack_semirot`, where we use
+bilinear interpolation vs upstream's bicubic B-spline). Multi-chain
+interface PDBs (1CGI, 1PRG, 7OPB) currently concatenate chains into a
+single PoseStack rather than detecting the inter-chain break, so
+inter-chain totals diverge from upstream there — known gap, tracked
+in [`docs/MULTI_CHAIN_PARITY.md`](docs/MULTI_CHAIN_PARITY.md). The
+per-term table and full caveats live in [`docs/PARITY.md`](docs/PARITY.md).
 
 One thing worth flagging: while running the gradient sweep we found
 that upstream's hand-written CUDA adjoint for `lk_bridge_uncpl`
@@ -151,9 +152,24 @@ Boltz-2 losses via `+` / `*`.
 | [`docs/PHYSICS.md`](docs/PHYSICS.md) | The 20 energy channels, in one page |
 | [`docs/WHY_JAX.md`](docs/WHY_JAX.md) | Why we re-implemented this in JAX |
 | [`docs/PORT_NOTES.md`](docs/PORT_NOTES.md) | Gaps and behavioural differences vs upstream |
-| [`docs/MOSAIC_INTEGRATION.md`](docs/MOSAIC_INTEGRATION.md) | Use jtmol as a binding-affinity loss in mosaic / Boltz-2 |
-| [`docs/EXTRA_SCORES.md`](docs/EXTRA_SCORES.md) | Extra differentiable interface scores (SS99, BUH, PRODIGY) |
+| [`docs/MOSAIC_INTEGRATION.md`](docs/MOSAIC_INTEGRATION.md) | Use jtmol as a binding-affinity loss in mosaic / Boltz-2; affinity-tuning recipe |
+| [`docs/EXTRA_SCORES.md`](docs/EXTRA_SCORES.md) | Extra differentiable interface scores (SS99, TransComp, BUH, PRODIGY, DFIRE) and the three-channel KineticsTuningLoss |
 | [`docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md`](docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md) | A real gradient bug we found in upstream, with reproducer |
+
+### Worked examples
+
+| Script | Topic |
+|---|---|
+| [`examples/minimize_1ubq.py`](examples/minimize_1ubq.py) | Single-PDB Cartesian L-BFGS minimization |
+| [`examples/vmap_over_poses.py`](examples/vmap_over_poses.py) | `jit(vmap)` over a pose-stack batch |
+| [`examples/neighbor_list_benchmark.py`](examples/neighbor_list_benchmark.py) | Dense vs cell-list timing on 1ubq |
+| [`examples/differentiable_folding.py`](examples/differentiable_folding.py) | Gradient through forward kinematics |
+| [`examples/demo_steering.py`](examples/demo_steering.py) | Per-term reweighting collapses to LJ-on/off as the only directional knob |
+| [`examples/demo_affinity_tuning.py`](examples/demo_affinity_tuning.py) | Per-residue hot-spot identifier with per-term breakdown |
+| [`examples/demo_extra_scores.py`](examples/demo_extra_scores.py) | Smoke-test for the five new interface scores |
+| [`examples/demo_kinetics_tuning.py`](examples/demo_kinetics_tuning.py) | Three-channel kon/koff/Kd loss with per-axis hot-residue ranking |
+| [`examples/demo_alanine_scan_kinetics.py`](examples/demo_alanine_scan_kinetics.py) | In-silico ALA scan on the kinetic-axis hot residues |
+| [`examples/integration_mosaic_hallucinator.py`](examples/integration_mosaic_hallucinator.py) | `LossTerm` wrappers for [mosaic](https://github.com/escalante-bio/mosaic) / Boltz-2 hallucination |
 
 ## Credit / upstream
 

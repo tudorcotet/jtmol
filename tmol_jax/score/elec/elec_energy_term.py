@@ -162,26 +162,6 @@ def _annotate_packed_block_types(
 # --------------------------------------------------------------------- #
 
 
-def _gather_per_atom_from_blocks(
-    per_type_table: jax.Array,  # [T, B_atoms] or [T, B_atoms, B_atoms]
-    block_type_ind: jax.Array,  # [P, B] int32
-    block_coord_offset: jax.Array,  # [P, B] int32
-    n_atoms_per_type: jax.Array,  # [T] int32
-    max_n_atoms_per_pose: int,
-) -> jax.Array:
-    """Scatter per-block-type data into a flat ``[P, N]`` (or ``[P, N, N]``)
-    per-pose representation.
-
-    Done host-side via numpy -- this function is only used for the
-    static setup quantities (charges, per-atom-pair path distances)
-    where we know the block layout ahead of time.
-    """
-    # We actually invoke the numpy version; this function body is kept
-    # as a convenience for readability. The real scatter happens in
-    # :func:`_scatter_per_atom_tables` below.
-    raise NotImplementedError  # pragma: no cover
-
-
 def _scatter_charges(
     per_type_charges: np.ndarray,  # [T, A_bt] float32
     block_type_ind: np.ndarray,  # [P, B]
