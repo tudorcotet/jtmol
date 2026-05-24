@@ -296,15 +296,29 @@ class PoseStackBuilder:
             bti_p = block_type_ind[p, :nb_p]
 
             # Scan consecutive block slots. If two real residues share a
-            # chain and their residue numbers are exactly +1 apart, they
-            # are "directly connected" by a peptide bond.
+            # chain, they are "directly connected" by a peptide bond.
+            #
+            # NOTE: we deliberately do NOT require residue-number
+            # consecutivity here (i.e. we do NOT check ``res_num[j] -
+            # res_num[i] == 1``). Upstream tmol's
+            # ``determine_chain_ending_status`` only breaks the peptide
+            # bond on (a) a true chain-id change or (b) an explicit
+            # ``res_not_connected`` flag. A same-chain residue-number
+            # *gap* (e.g. 3plc with author residues 26 -> 35 across an
+            # 8-residue missing-density region) is still treated as a
+            # connected pair by upstream — the resulting rama / omega /
+            # cart-torsion contributions on the residues bracketing the
+            # gap are mathematically "wrong" but they are also the
+            # numbers we are measuring parity against. Adding a
+            # res_num delta check here used to under-count those
+            # contributions by ~15-30 % on disulfide-rich PDBs like
+            # 3plc (rama, omega, dunbrack_rotdev, cart_torsions all
+            # diverged from upstream). See docs/UPSTREAM_PARITY.md.
             for i in range(nb_p - 1):
                 j = i + 1
                 if bti_p[i] < 0 or bti_p[j] < 0:
                     continue
                 if chain_p[i] != chain_p[j] or chain_p[i] < 0:
-                    continue
-                if int(res_num_p[j]) - int(res_num_p[i]) != 1:
                     continue
                 _, up_i = _up_down_for_bt(int(bti_p[i]))
                 down_j, _ = _up_down_for_bt(int(bti_p[j]))

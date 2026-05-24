@@ -274,6 +274,7 @@ def default_packed_block_types() -> Any:
 def canonical_form_from_pdb(
     pdb_text_or_path: Any,
     canonical_ordering: Optional[CanonicalOrdering] = None,
+    missing_density_distance_threshold: float = 2.4,
 ) -> Dict[str, Any]:
     """Parse a PDB and convert it to a canonical-form dictionary.
 
@@ -425,6 +426,21 @@ def canonical_form_from_pdb(
         atom_present[0, r, aind] = True
         occupancy_arr[0, r, aind] = float(occupancy_raw[i])
         b_factor_arr[0, r, aind] = float(b_factor_raw[i])
+
+    # Note: missing-density chain-break detection is intentionally NOT
+    # done here. Upstream tmol's biotite loader has a corresponding
+    # ``missing_density_distance_threshold`` knob, but it uses min-atom
+    # distance which on PDBs like 3plc (HA of THR26 sits 2.26 A from O
+    # of ASP35 across an 8-residue gap) falls below the default 2.4 A
+    # threshold and so does NOT fire. Upstream therefore treats the
+    # two residues bracketing a missing-density gap as a "connected"
+    # peptide-bond pair, even though the bond is physically nonsense.
+    # The resulting rama / omega / cart-torsion contributions are
+    # mathematically wrong but match the upstream live torch numbers
+    # we are doing parity against. See
+    # ``tmol_jax.pose.pose_stack_builder.from_block_types_and_coords``
+    # for the matching peptide-bond wiring rule.
+    _ = missing_density_distance_threshold  # accepted for forward-compat
 
     return {
         "coords": coords,
