@@ -294,47 +294,62 @@ def run_one_pdb(pdb_label: str) -> dict:
             assert g.ndim == 3 and g.shape[0] == 1
             return e, g[0]
 
-        # Upstream's ``set_weight(st, 0.0)`` calls a broken
-        # ``remove_term_for_score_type`` (#TODO in their source), so
-        # we can never set any weight to 0. The CartBondedEnergyTerm
-        # has 5 sub-channels and ``render_whole_pose_scoring_module``
-        # returns one entry per registered sub-channel; setting only
-        # ``cart_lengths`` to 1.0 fails to materialize cart_lengths
-        # (returns 0) because the term's 2/3-body subgraph enumeration
-        # gates on the full sub-channel set. Fix: register all 5 at
-        # 1.0 (never 0.0) and pick the target's entry from the
-        # 5-element output vector. The cart_bonded sub-channels are
-        # emitted in the order declared by
-        # ``tmol/score/cartbonded/cartbonded_energy_term.py``.
+        # For cart_bonded sub-channels we cannot use the
+        # high-level ScoreFunction: set_weight(_, 0.0) hits a broken
+        # remove_term_for_score_type upstream, AND setting only the
+        # target sub-channel to 1.0 fails to materialize cart_lengths
+        # / cart_angles, AND setting all 5 to 1.0 collapses them into
+        # a single weighted-sum scalar (`size [1]`) so we can't index
+        # per-channel. Fix: bypass ScoreFunction entirely and use the
+        # ``CartBondedEnergyTerm`` directly — its
+        # render_whole_pose_scoring_module returns the unweighted
+        # 5-channel breakdown in the canonical declared order
+        # (cart_lengths, cart_angles, cart_torsions, cart_impropers,
+        # cart_hxltorsions).
         CART_BONDED_ORDER = [
             "cart_lengths", "cart_angles", "cart_torsions",
             "cart_impropers", "cart_hxltorsions",
         ]
         CART_BONDED_SUBSET = set(CART_BONDED_ORDER)
 
+        # Build the cart_bonded term once per PDB and reuse.
+        cb_term_ref = {}
+
+        def _build_cart_bonded_term():
+            if cb_term_ref:
+                return cb_term_ref["term"]
+            from tmol.score.cartbonded.cartbonded_energy_term import (
+                CartBondedEnergyTerm,
+            )
+            term = CartBondedEnergyTerm(
+                ParameterDatabase.get_default(), torch.device("cpu")
+            )
+            for bt in torch_pose.packed_block_types.active_block_types:
+                term.setup_block_type(bt)
+            term.setup_packed_block_types(torch_pose.packed_block_types)
+            term.setup_poses(torch_pose)
+            cb_term_ref["term"] = term
+            return term
+
         def _torch_energy_and_grad(name):
-            sfxn = UpScoreFunction(ParameterDatabase.get_default(), torch.device("cpu"))
-            target = getattr(UpScoreType, name)
             if name in CART_BONDED_SUBSET:
-                for sub_name in CART_BONDED_ORDER:
-                    sub_st = getattr(UpScoreType, sub_name)
-                    sfxn.set_weight(sub_st, 1.0)
+                term = _build_cart_bonded_term()
+                scorer = term.render_whole_pose_scoring_module(torch_pose)
+                # float64 — the cubic-Hermite kink terms
+                # (cart_torsions, cart_hxltorsions) need it.
+                coords = torch_pose.coords.detach().clone().double().requires_grad_(True)
+                per_channel = scorer(coords)  # shape [5, n_poses=1]
                 target_idx = CART_BONDED_ORDER.index(name)
+                scalar = per_channel.reshape(len(CART_BONDED_ORDER), -1)[target_idx].sum()
             else:
+                sfxn = UpScoreFunction(
+                    ParameterDatabase.get_default(), torch.device("cpu")
+                )
+                target = getattr(UpScoreType, name)
                 sfxn.set_weight(target, 1.0)
-                target_idx = None
-            scorer = sfxn.render_whole_pose_scoring_module(torch_pose)
-            # float64 throughout so the cubic-Hermite kink derivative
-            # (cart_torsions, omega, cart_hxltorsions) reaches its
-            # true Blondel-Karplus analytical-adjoint precision
-            # instead of being floor-limited by float32.
-            coords = torch_pose.coords.detach().clone().double().requires_grad_(True)
-            weighted = scorer(coords)
-            if target_idx is not None:
-                # Pick the target's per-channel value from the
-                # 5-element cart_bonded vector.
-                scalar = weighted.reshape(-1)[target_idx]
-            else:
+                scorer = sfxn.render_whole_pose_scoring_module(torch_pose)
+                coords = torch_pose.coords.detach().clone().double().requires_grad_(True)
+                weighted = scorer(coords)
                 scalar = weighted.sum()
             scalar.backward()
             e = float(scalar.detach().cpu().float().item())
