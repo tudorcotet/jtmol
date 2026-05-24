@@ -53,6 +53,13 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, "tmol"))
 
 import numpy as np  # noqa: E402
 import jax  # noqa: E402
+
+# float64 throughout: the cubic-Hermite kink terms (cart_torsions /
+# omega / cart_hxltorsions) accumulate ~1e-2 relative error in
+# float32, masking the true Blondel-Karplus analytical-adjoint parity
+# (verified ~1e-9 vs upstream in float64).
+jax.config.update("jax_enable_x64", True)
+
 import jax.numpy as jnp  # noqa: E402
 
 
@@ -255,7 +262,8 @@ def _torch_energy_and_grad(pose, target_name, up: _Upstream):
     target = getattr(up.ScoreType, target_name)
     sfxn.set_weight(target, 1.0)
     scorer = sfxn.render_whole_pose_scoring_module(pose)
-    coords = pose.coords.detach().clone().float().requires_grad_(True)
+    # float64 — see top-of-file note on cubic-Hermite kink precision.
+    coords = pose.coords.detach().clone().double().requires_grad_(True)
     weighted = scorer(coords)
     scalar = weighted.sum()
     scalar.backward()
