@@ -294,46 +294,48 @@ def run_one_pdb(pdb_label: str) -> dict:
             assert g.ndim == 3 and g.shape[0] == 1
             return e, g[0]
 
-        # The first single-target Modal run returned 0 specifically
-        # on cart_lengths and cart_angles but worked for every other
-        # term (including the 3 other CartBondedEnergyTerm sub-channels
-        # cart_torsions / cart_impropers / cart_hxltorsions). So
-        # something in the upstream CartBondedTerm's 2- and 3-body
-        # subgraph enumeration gates on the full 5-weight set being
-        # registered. Trying the all-weights-on extraction broke
-        # everything (index lookup against ``sfxn.score_types``
-        # disagrees with the scorer's per-channel ordering). Going
-        # back to single-target weighting but enabling all 5
-        # cart_bonded sub-weights together for the cart_bonded rows.
-        CART_BONDED_SUBSET = {
+        # Upstream's ``set_weight(st, 0.0)`` calls a broken
+        # ``remove_term_for_score_type`` (#TODO in their source), so
+        # we can never set any weight to 0. The CartBondedEnergyTerm
+        # has 5 sub-channels and ``render_whole_pose_scoring_module``
+        # returns one entry per registered sub-channel; setting only
+        # ``cart_lengths`` to 1.0 fails to materialize cart_lengths
+        # (returns 0) because the term's 2/3-body subgraph enumeration
+        # gates on the full sub-channel set. Fix: register all 5 at
+        # 1.0 (never 0.0) and pick the target's entry from the
+        # 5-element output vector. The cart_bonded sub-channels are
+        # emitted in the order declared by
+        # ``tmol/score/cartbonded/cartbonded_energy_term.py``.
+        CART_BONDED_ORDER = [
             "cart_lengths", "cart_angles", "cart_torsions",
             "cart_impropers", "cart_hxltorsions",
-        }
+        ]
+        CART_BONDED_SUBSET = set(CART_BONDED_ORDER)
 
         def _torch_energy_and_grad(name):
             sfxn = UpScoreFunction(ParameterDatabase.get_default(), torch.device("cpu"))
             target = getattr(UpScoreType, name)
             if name in CART_BONDED_SUBSET:
-                # Register all 5 sub-channels with the target at 1.0
-                # and the rest at 0.0. The whole CartBondedTerm gets
-                # initialized but only the target contributes to the
-                # weighted sum.
-                for sub_name in CART_BONDED_SUBSET:
+                for sub_name in CART_BONDED_ORDER:
                     sub_st = getattr(UpScoreType, sub_name)
-                    sfxn.set_weight(
-                        sub_st, 1.0 if sub_name == name else 0.0
-                    )
+                    sfxn.set_weight(sub_st, 1.0)
+                target_idx = CART_BONDED_ORDER.index(name)
             else:
                 sfxn.set_weight(target, 1.0)
+                target_idx = None
             scorer = sfxn.render_whole_pose_scoring_module(torch_pose)
             # float64 throughout so the cubic-Hermite kink derivative
             # (cart_torsions, omega, cart_hxltorsions) reaches its
             # true Blondel-Karplus analytical-adjoint precision
-            # instead of being floor-limited by float32 (~1e-2 vs
-            # ~1e-9 — verified by the prior diagnostic).
+            # instead of being floor-limited by float32.
             coords = torch_pose.coords.detach().clone().double().requires_grad_(True)
             weighted = scorer(coords)
-            scalar = weighted.sum()
+            if target_idx is not None:
+                # Pick the target's per-channel value from the
+                # 5-element cart_bonded vector.
+                scalar = weighted.reshape(-1)[target_idx]
+            else:
+                scalar = weighted.sum()
             scalar.backward()
             e = float(scalar.detach().cpu().float().item())
             if coords.grad is None:
