@@ -252,15 +252,45 @@ def _improper_root_atom_names(cart_db: Any) -> set:
     return roots
 
 
-def _base_name_for_lookup(rt: Any) -> str:
+def _base_name_for_lookup(rt: Any) -> Optional[str]:
     """Normalize a residue's base name for cartbonded DB lookup.
 
-    Applies the upstream CYD -> CYS hack (disulfide-bonded cysteine shares
-    the standard cysteine parameters for cart bonded purposes).
+    Upstream tmol applies a ``temp_hack_base_name`` that *loads* CYS
+    cartbonded params for CYD blocks (see ``setup_block_type``), but the
+    per-block atom unique-IDs are still keyed by ``base_name`` (= "CYD")
+    via :func:`tmol.score.atom_type_dependent_term.get_atom_unique_id_name`.
+    Result: at score time, the hash lookup is always
+    ``UNIQUE_ID:CYD:<atom>``, but the table was populated with
+    ``UNIQUE_ID:CYS:<atom>`` — every intra-residue cartbonded subgraph on
+    a CYD residue is silently a hash miss. Upstream contributes **zero**
+    intra-residue cartbonded energy for CYD blocks (lengths, angles,
+    proper torsions, impropers, and hxl torsions all drop).
+
+    Inter-residue subgraphs spanning the C-N peptide bond still work for
+    CYD because those use the ``wildcard`` DB whose keys are
+    ``WILDCARD_ID:<atom>`` (no residue prefix).
+
+    Mirrors the same upstream-quirk handling as the ``HIS_POS`` /
+    ``HIS_D`` family (see :func:`_extra_lookup_bases_for_rt`). Returning
+    ``None`` here causes the per-residue DB lookup in
+    :func:`_subgraphs_for_block_type` and
+    :func:`_build_cart_dbs_for_residue` to find no entries, so no
+    intra-residue params are loaded for the block.
+
+    Before this fix jtmol applied a CYD -> CYS rewrite that picked up
+    three intra-residue improper terms per CYD residue (the upstream
+    cart-bonded table has ``(C,N,CA,CB)``, ``(N,C,CA,CB)``, and
+    ``(N,C,CA,HA)`` impropers under CYS). On disulfide-rich proteins
+    this gave a +0.05 to +0.42 kcal/mol cart_impropers excess over the
+    upstream baseline (e.g. +0.42 on 6DMZ_A's 8 CYDs, +0.24 on 3plc's 8
+    CYDs). 1ubq / 1qys / 1r21 — which have CYS but no disulfides — were
+    bit-exact already because they never hit this code path.
     """
     base = getattr(rt, "base_name", None) or getattr(rt, "name3", None) or rt.name
     if base == "CYD":
-        return "CYS"
+        # See docstring: upstream silently drops all intra-residue cart
+        # bonded params for CYD; signal "no DB entry" to the callers.
+        return None
     return base
 
 
