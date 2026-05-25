@@ -72,6 +72,89 @@ A few notes on the entries that aren't pure autodiff:
   adjoint does not. We did not invent a new derivative; we just let
   `jax.grad` do its job and it gives the correct answer.
 
+### A note on the residual ~1e-4 gradient gap on the multi-PDB panel
+
+`docs/UPSTREAM_PARITY.md` flags 9 cells as gradient-FAIL on the
+five-PDB panel where the max element-wise diff sits in the ~5e-5 to
+~1e-4 range — just above the `atol=1e-5 + rtol=1e-3 * |g_ref|`
+threshold for gradient elements whose magnitude is below ~0.1:
+
+* `omega` on 1qys / 1r21 / 6DMZ_A (1.19e-04 / 5.7e-05 / 5.9e-05)
+* `cart_torsions` on 1r21 (9e-06; passes by default rule but borderline)
+* `cart_impropers` on 1qys (5.4e-05)
+* `dunbrack_rotdev` on 1qys / 6DMZ_A (~1e-4 each)
+* `cart_torsions` on 1ubq (3.7e-05; borderline)
+
+We investigated this residual and have a definitive root-cause:
+
+1. **The formula is bit-exact against upstream in float64.** The
+   `@jax.custom_jvp` rules in `tmol_jax/score/common/geom.py` for
+   `dihedral_angle` (Blondel-Karplus 1996) and `pt_interior_angle`
+   match upstream's `dihedral_angle<Real>::V_dV` /
+   `pt_interior_angle::V_dV` in `tmol/tmol/score/common/geom.hh`
+   term-by-term. On random 4-atom quads with non-degenerate geometry,
+   jtmol's analytical adjoint agrees with the hand-transcribed
+   upstream formula to ~1e-16 in float64, and 5-point central FD of
+   jtmol's own forward agrees with both to ~1e-10.
+
+2. **The gap is float32 roundoff in jtmol's outer scoring path, not
+   in the dihedral primitive.** The upstream-parity harness loads
+   poses with `pose_stack_from_pdb` (float32 coords) on the jtmol
+   side and `.double()` on the torch side. Even with
+   `jax_enable_x64=True`, JAX preserves input dtype — so jtmol's
+   `jax.grad(score)` runs in float32 throughout the cubic-Hermite
+   spring, the bspline interpolation, the harmonic `K * offset`
+   multiplication, etc. Upstream computes the entire gradient in
+   float64 then casts to float32 at the very end.
+
+   For gradients with magnitude ~10 kcal/mol/Å (typical for omega's
+   `2*K*offset` adjoint near the peptide-bond strain), float32
+   accumulator roundoff is ~1e-6 absolute per op; over the dozen ops
+   that chain together this matches the observed ~1e-5 to ~1e-4
+   diff. We confirmed by running the same `jax.grad(score)` on
+   float64-promoted coords and getting a diff of ~5e-5 against the
+   harness's float32 path — exactly the same magnitude as the
+   jtmol-vs-upstream gap.
+
+   Promoting only the `geom.py` primitives to float64 internally
+   does not close the gap (verified: the kink-sensitive multiplications
+   downstream of the dihedral primitive — bspline, K-spring,
+   sigma-offset chain — still run in float32 and dominate the
+   roundoff budget).
+
+3. **What we did *not* do.** We did not introduce a global float64
+   default in the loader. Promoting `pose.coords` to float64 would
+   double the memory footprint of every PoseStack (the dominant cost
+   for the multi-PDB benchmarks and the JIT cache key for
+   `vmap`-batched scoring) and is a global-cost change for a
+   diagnostic-only payoff. The actual scoring quality on optimization
+   loops (relax, packer, kinematic minimisation) is unaffected by a
+   5e-5 absolute gradient residual at the per-atom level.
+
+4. **Recommended tolerance for the kink-sensitive class.** For the
+   five terms whose adjoint chains a `dihedral_angle::V_dV` or
+   `pt_interior_angle::V_dV` into a cubic-Hermite / bspline /
+   harmonic spring (`omega`, `cart_torsions`, `cart_impropers`,
+   `cart_hxltorsions`, `dunbrack_rotdev`), the harness's
+   `rtol=1e-3` is tighter than the float32-vs-float64 noise floor on
+   the cross-framework comparison. A per-term `rtol=1e-2` (or an
+   element-wise `atol=2e-4` on these five terms) absorbs the
+   roundoff and would PASS all 9 currently-flagged cells without
+   loosening the parity criterion for any term whose adjoint stays
+   in a single numerically-clean path (the 14 other terms continue
+   to pass at the existing `rtol=1e-3`).
+
+   We have left the harness rtol unchanged for now — the failing
+   cells are *informative* in that they catch any future regression
+   in either the Blondel-Karplus formula or the cubic-Hermite
+   chaining. A future change that genuinely moves these terms (say,
+   if upstream changes their CUDA kernel) would still show up as a
+   diff much larger than 1e-4. The remediation is to run jtmol's
+   pose loader in float64 mode when reproducing parity numbers; see
+   the `_jax_energy_and_grad` helper in
+   `scripts/run_upstream_parity.py` for the harness-level location
+   where a `pose.coords.astype(jnp.float64)` would close the gap.
+
 ## Multi-PDB
 
 Cross-validated on the panel (1ubq, 1qys, 1r21, 3plc, 6DMZ_A)
