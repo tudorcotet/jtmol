@@ -394,24 +394,68 @@ class PoseStackBuilder:
         # inter_block_bondsep
         #
         # Shape: [n_poses, max_n_blocks, max_n_blocks, max_n_conn, max_n_conn].
-        # Approximation described in the task spec: entries are 1 for
-        # connection-point pairs that sit on directly-connected residues
-        # (on the two connection slots that form that peptide bond), and
-        # MAX_SIG_BOND_SEPARATION (== 6) everywhere else.
+        # Encodes the bond separation between every pair of inter-residue
+        # connection points across every pair of residues. Upstream
+        # populates this via:
+        #   1. intra-block conn-to-conn distance for the (k, k) diagonal
+        #      from ``bt.intrares_path_distance[conn_atom_a, conn_atom_b]``
+        #      (e.g. PRO down->up = 2, ALA down->up = 3),
+        #   2. value 1 for directly-bonded conn pairs (peptide bonds, dslf),
+        #   3. all-pairs-shortest-path (Floyd-Warshall) propagating sums of
+        #      the above through the inter-residue connection graph.
+        # Unused conn slots (above ``n_conn`` for a block type) stay at
+        # MAX_SIG_BOND_SEPARATION (== 6). This mirrors upstream's
+        # ``PoseStackBuilder._calculate_interblock_bondsep_from_connectivity_graph``
+        # closely enough for fa_elec / fa_ljatr / etc. count_pair scaling
+        # to match bit-exact for non-trivial chains (1r21's 5xHIS_POS panel
+        # was the original parity blocker).
         # ------------------------------------------------------------------
         inter_block_bondsep = np.full(
             (n_poses, max_n_blocks, max_n_blocks, max_n_conn, max_n_conn),
             MAX_SIG_BOND_SEPARATION,
             dtype=np.int32,
         )
-        # Self-to-self distance across conn pairs is set to 0 — upstream
-        # stores intra-block conn-conn distances in a separate structure,
-        # but the consumers of `inter_block_bondsep` in tmol only look at
-        # off-diagonal entries anyway, so a 0 on the diagonal is the
-        # least-surprising filler.
-        if max_n_blocks > 0:
-            diag_idx = np.arange(max_n_blocks)
-            inter_block_bondsep[:, diag_idx, diag_idx, :, :] = 0
+
+        # Per-block intra-block conn-to-conn distances, looked up from the
+        # block type's ``intrares_path_distance`` (an [n_atoms, n_atoms]
+        # bondsep matrix). Indexed by the *connection* slot index, which
+        # we map to the underlying atom index via ``bt.connections[c].atom``.
+        def _conn_atom_indices(bt: Any) -> List[int]:
+            atom_to_idx = {a.name: i for i, a in enumerate(bt.atoms)}
+            out: List[int] = []
+            for c in (getattr(bt, "connections", ()) or ()):
+                at_name = getattr(c, "atom", None)
+                out.append(int(atom_to_idx.get(at_name, -1)))
+            return out
+
+        for p in range(n_poses):
+            for k in range(int(n_blocks_per_pose[p])):
+                bt_ind = int(block_type_ind[p, k])
+                if bt_ind < 0 or abt_lookup is None:
+                    continue
+                bt = abt_lookup[bt_ind]
+                ipd = getattr(bt, "intrares_path_distance", None)
+                conn_atoms_for_bt = _conn_atom_indices(bt)
+                n_conn_bt = len(conn_atoms_for_bt)
+                if ipd is None or n_conn_bt == 0:
+                    # Fallback: at least put 0 on the (ci, ci) entries we
+                    # actually have.
+                    for ci in range(n_conn_bt):
+                        inter_block_bondsep[p, k, k, ci, ci] = 0
+                    continue
+                ipd_arr = np.asarray(ipd, dtype=np.int32)
+                for ci in range(n_conn_bt):
+                    ai = conn_atoms_for_bt[ci]
+                    if ai < 0 or ai >= ipd_arr.shape[0]:
+                        continue
+                    for cj in range(n_conn_bt):
+                        aj = conn_atoms_for_bt[cj]
+                        if aj < 0 or aj >= ipd_arr.shape[1]:
+                            continue
+                        d = int(ipd_arr[ai, aj])
+                        if d < 0 or d > MAX_SIG_BOND_SEPARATION:
+                            d = MAX_SIG_BOND_SEPARATION
+                        inter_block_bondsep[p, k, k, ci, cj] = d
 
         # Wire the direct-connection pairs using the per-block-type
         # connection indices recorded above.
@@ -425,6 +469,39 @@ class PoseStackBuilder:
             for i, j, dslf_i, dslf_j in dslf_pairs_p:
                 inter_block_bondsep[p, i, j, dslf_i, dslf_j] = 1
                 inter_block_bondsep[p, j, i, dslf_j, dslf_i] = 1
+
+        # All-pairs-shortest-path over the inter-residue connection graph
+        # to propagate multi-hop bondseps. Each "node" is a (block, conn)
+        # pair; the edge weight from (i, ca) to (j, cb) is the value already
+        # written above. We run Floyd-Warshall on the flat (B * C)-sized
+        # graph per pose, clamping to MAX_SIG_BOND_SEPARATION.
+        if max_n_blocks > 0 and max_n_conn > 0:
+            BC = max_n_blocks * max_n_conn
+            for p in range(n_poses):
+                # Flatten [B, B, C, C] to [B*C, B*C] for the APSP loop.
+                # Mapping: pconn_index = block_index * max_n_conn + conn_index.
+                flat = (
+                    inter_block_bondsep[p]
+                    .transpose(0, 2, 1, 3)  # [B, C, B, C]
+                    .reshape(BC, BC)
+                    .copy()
+                )
+                # Mark "unreal" pconn slots (above n_conn for a block, or
+                # for padding blocks) so APSP doesn't route through them.
+                # We do this by checking the diagonal: real pconn slots
+                # have flat[i, i] == 0 (set above), padding has 6.
+                real_pconn = (flat.diagonal() == 0)
+                # Floyd-Warshall.
+                for k_node in range(BC):
+                    if not real_pconn[k_node]:
+                        continue
+                    fk = flat[:, k_node : k_node + 1] + flat[k_node : k_node + 1, :]
+                    np.minimum(flat, fk, out=flat)
+                np.minimum(flat, MAX_SIG_BOND_SEPARATION, out=flat)
+                inter_block_bondsep[p] = (
+                    flat.reshape(max_n_blocks, max_n_conn, max_n_blocks, max_n_conn)
+                    .transpose(0, 2, 1, 3)
+                )
 
         # ------------------------------------------------------------------
         # PDBInfo
