@@ -13,40 +13,8 @@
 ## Summary
 
 - Total cells: **100**
-- Forward parity: **87/100** (87.0%) PASS, 13 FAIL, 0 SKIP
-- Gradient parity: **71/100** (71.0%) PASS, 29 FAIL, 0 SKIP
-
-### What the 13 forward-FAILs are
-
-* **10 cells are harness-API artifacts, not real jtmol bugs**: all 5
-  PDBs × `cart_lengths` + `cart_angles`. Upstream's
-  `CartBondedEnergyTerm.render_whole_pose_scoring_module` returns 0
-  for the 2- and 3-body sub-channels under every weight-setup pattern
-  we've tried (single-target, all-5-to-1.0, direct term-level
-  scoring). The 4-body sub-channels (cart_torsions, cart_impropers,
-  cart_hxltorsions) all PASS, and the bundled YAML goldens at
-  `tmol/tmol/tests/data/term_baselines/CartBondedEnergyTerm/` prove
-  jtmol's values for cart_lengths and cart_angles are correct to
-  ≤0.004% on 1ubq (see `docs/PARITY.md`).
-* **3 cells are real divergences**: `1r21 fa_elec` 0.33% (Δn_atoms=5
-  between loaders on this NMR ensemble pose), `3plc dunbrack_rot`
-  4.1% and `3plc dunbrack_rotdev` 21% (b-spline residual at the
-  missing-density gap, partially addressed by `67ac14a`).
-
-### What the 29 gradient-FAILs are
-
-* **10 cells** = the same cart_lengths + cart_angles cells whose
-  forward returns 0 → gradient comparison meaningless.
-* **10 cells** = `lk_bridge` + `lk_bridge_uncpl` × 5 PDBs. The
-  documented upstream adjoint bug at sp2 backbone-O acceptors; jtmol
-  matches FD to 1e-9, upstream's hand-coded CUDA adjoint doesn't.
-  See `docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md`.
-* **3 cells** `omega` grad on 1qys / 1r21 / 6DMZ_A, ~1e-4 max|dg|,
-  just above rtol=1e-3 — kink-evaluation precision near 180°.
-* **2 cells** `dunbrack_rotdev` grad on 1qys / 6DMZ_A, ~1e-4 max|dg|,
-  bilinear-vs-bicubic interpolation residual.
-* **4 cells** `cart_torsions` / `cart_impropers` grad above tolerance,
-  same kink-precision class.
+- Forward parity: **88/100** (88.0%) PASS, 12 FAIL, 0 SKIP
+- Gradient parity: **72/100** (72.0%) PASS, 28 FAIL, 0 SKIP
 
 ## Per-term breakdown
 
@@ -55,19 +23,19 @@
 | fa_ljatr | 5/5 | 5/5 | 2.04e-05 |  |
 | fa_ljrep | 5/5 | 5/5 | 1.67e-04 |  |
 | fa_lk | 5/5 | 5/5 | 1.36e-06 |  |
-| fa_elec | 4/5 | 4/5 | 2.31e-01 | max forward rel-err on a failing PDB: 0.33% |
+| fa_elec | 5/5 | 5/5 | 1.22e-05 |  |
 | hbond | 5/5 | 5/5 | 1.66e-05 |  |
 | rama | 5/5 | 5/5 | 2.56e-05 |  |
 | omega | 5/5 | 2/5 | 1.19e-04 |  |
 | dunbrack_rot | 4/5 | 4/5 | 5.80e-01 | max forward rel-err on a failing PDB: 4.1% |
 | dunbrack_rotdev | 4/5 | 2/5 | 2.48e+01 | max forward rel-err on a failing PDB: 21% |
-| dunbrack_semirot | 5/5 | 5/5 | 2.19e-05 |  |
+| dunbrack_semirot | 5/5 | 5/5 | 2.24e-05 |  |
 | cart_lengths | 0/5 | 0/5 | 1.32e+03 | max forward rel-err on a failing PDB: 2.7e+17% |
 | cart_angles | 0/5 | 0/5 | 5.80e+01 | max forward rel-err on a failing PDB: 1.8e+16% |
 | cart_torsions | 5/5 | 3/5 | 4.00e-05 |  |
 | cart_impropers | 5/5 | 4/5 | 5.46e-05 |  |
 | cart_hxltorsions | 5/5 | 5/5 | 8.66e-07 |  |
-| lk_ball_iso | 5/5 | 5/5 | 1.06e-06 |  |
+| lk_ball_iso | 5/5 | 5/5 | 9.71e-07 |  |
 | lk_ball | 5/5 | 5/5 | 4.28e-06 |  |
 | lk_bridge | 5/5 | 1/5 | 4.42e-02 |  |
 | lk_bridge_uncpl | 5/5 | 1/5 | 3.84e-01 |  |
@@ -81,9 +49,9 @@ Cells: ``PASS`` = both forward and gradient within tolerance; ``F:<x%>`` = forwa
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | 1ubq | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | FAIL:3.8e+15% | FAIL:1.8e+16% | F:0.00011% | PASS | PASS | PASS | PASS | F:3.2e-05% | F:5.6e-06% | PASS |
 | 1qys | PASS | PASS | PASS | PASS | PASS | PASS | F:0.0028% | PASS | F:3e-05% | PASS | FAIL:9.8e+14% | FAIL:4.8e+15% | PASS | F:0.0001% | PASS | PASS | PASS | PASS | PASS | PASS |
-| 1r21 | PASS | PASS | PASS | FAIL:0.33% | PASS | PASS | F:0.0019% | PASS | PASS | PASS | FAIL:5.6e+15% | FAIL:8.8e+15% | F:9e-06% | PASS | PASS | PASS | PASS | F:5.3e-05% | F:2.9e-05% | PASS |
+| 1r21 | PASS | PASS | PASS | PASS | PASS | PASS | F:0.0019% | PASS | PASS | PASS | FAIL:5.6e+15% | FAIL:8.8e+15% | F:9e-06% | PASS | PASS | PASS | PASS | F:5.3e-05% | F:2.9e-05% | PASS |
 | 3plc | PASS | PASS | PASS | PASS | PASS | PASS | PASS | FAIL:4.1% | FAIL:21% | PASS | FAIL:2.7e+17% | FAIL:9.6e+15% | PASS | PASS | PASS | PASS | PASS | F:6.5e-06% | F:5.5e-06% | PASS |
-| 6DMZ_A | PASS | PASS | PASS | PASS | PASS | PASS | F:0.0011% | PASS | F:7.1e-06% | PASS | FAIL:1.2e+15% | FAIL:2.5e+15% | PASS | PASS | PASS | PASS | PASS | F:5.5e-05% | F:2.6e-05% | PASS |
+| 6DMZ_A | PASS | PASS | PASS | PASS | PASS | PASS | F:0.0011% | PASS | F:0% | PASS | FAIL:1.2e+15% | FAIL:2.5e+15% | PASS | PASS | PASS | PASS | PASS | F:5.5e-05% | F:2.6e-05% | PASS |
 
 ## Per-PDB detail tables
 
@@ -91,16 +59,16 @@ Cells: ``PASS`` = both forward and gradient within tolerance; ``F:<x%>`` = forwa
 
 | Term | Mode | Fwd | Grad | E(jax) | E(ref) | rel | max\|dg\| | Note |
 |---|---|:---:|:---:|---:|---:|---:|---:|---|
-| fa_ljatr | live | PASS | PASS | -417.9583 | -417.9582 | 7.3e-06% | 3.71e-07 |  |
-| fa_ljrep | live | PASS | PASS | +240.7148 | +240.7147 | 5.1e-05% | 1.24e-04 |  |
+| fa_ljatr | live | PASS | PASS | -417.9582 | -417.9582 | 0% | 3.71e-07 |  |
+| fa_ljrep | live | PASS | PASS | +240.7149 | +240.7147 | 5.7e-05% | 1.24e-04 |  |
 | fa_lk | live | PASS | PASS | +298.2766 | +298.2766 | 1e-05% | 7.95e-07 |  |
 | fa_elec | live | PASS | PASS | -136.2925 | -136.2925 | 3.4e-05% | 1.22e-05 |  |
 | hbond | live | PASS | PASS | -55.6756 | -55.6756 | 2e-05% | 1.64e-05 |  |
 | rama | live | PASS | PASS | -12.7434 | -12.7434 | 2.2e-05% | 1.36e-05 |  |
-| omega | live | PASS | PASS | +4.1002 | +4.1003 | 0.0013% | 1.03e-04 |  |
-| dunbrack_rot | live | PASS | PASS | +70.6497 | +70.6497 | 0% | 7.26e-06 |  |
-| dunbrack_rotdev | live | PASS | PASS | +240.3102 | +240.3102 | 2.5e-05% | 2.55e-04 |  |
-| dunbrack_semirot | live | PASS | PASS | +99.6609 | +99.6609 | 0% | 1.12e-05 |  |
+| omega | live | PASS | PASS | +4.1002 | +4.1003 | 0.0013% | 1.01e-04 |  |
+| dunbrack_rot | live | PASS | PASS | +70.6497 | +70.6497 | 0% | 8.73e-06 |  |
+| dunbrack_rotdev | live | PASS | PASS | +240.3102 | +240.3102 | 2.5e-05% | 1.44e-04 |  |
+| dunbrack_semirot | live | PASS | PASS | +99.6609 | +99.6609 | 0% | 1.08e-05 |  |
 | cart_lengths | live | FAIL | FAIL | +37.7637 | +0.0000 | 3.8e+15% | 3.79e+01 |  |
 | cart_angles | live | FAIL | FAIL | +183.5698 | +0.0000 | 1.8e+16% | 5.13e+01 |  |
 | cart_torsions | live | PASS | FAIL | +46.0235 | +46.0236 | 0.00011% | 3.72e-05 |  |
@@ -117,10 +85,10 @@ Cells: ``PASS`` = both forward and gradient within tolerance; ``F:<x%>`` = forwa
 | Term | Mode | Fwd | Grad | E(jax) | E(ref) | rel | max\|dg\| | Note |
 |---|---|:---:|:---:|---:|---:|---:|---:|---|
 | fa_ljatr | live | PASS | PASS | -522.1743 | -522.1743 | 0% | 5.85e-07 |  |
-| fa_ljrep | live | PASS | PASS | +423.9046 | +423.9045 | 1.4e-05% | 1.19e-04 |  |
+| fa_ljrep | live | PASS | PASS | +423.9046 | +423.9045 | 2.2e-05% | 1.19e-04 |  |
 | fa_lk | live | PASS | PASS | +383.1672 | +383.1672 | 1.6e-05% | 1.36e-06 |  |
 | fa_elec | live | PASS | PASS | -156.8206 | -156.8205 | 3.9e-05% | 1.18e-05 |  |
-| hbond | live | PASS | PASS | -73.4560 | -73.4560 | 1.7e-05% | 9.10e-06 |  |
+| hbond | live | PASS | PASS | -73.4560 | -73.4560 | 1.2e-05% | 9.10e-06 |  |
 | rama | live | PASS | PASS | +35.8673 | +35.8673 | 2.1e-05% | 1.03e-05 |  |
 | omega | live | PASS | FAIL | +2.2270 | +2.2271 | 0.0028% | 1.19e-04 |  |
 | dunbrack_rot | live | PASS | PASS | +62.5133 | +62.5133 | 6.1e-06% | 8.43e-06 |  |
@@ -131,7 +99,7 @@ Cells: ``PASS`` = both forward and gradient within tolerance; ``F:<x%>`` = forwa
 | cart_torsions | live | PASS | PASS | +13.9918 | +13.9919 | 0.00025% | 3.78e-05 |  |
 | cart_impropers | live | PASS | FAIL | +3.1952 | +3.1952 | 0.0001% | 5.46e-05 |  |
 | cart_hxltorsions | live | PASS | PASS | +51.5254 | +51.5254 | 7.4e-06% | 6.90e-07 |  |
-| lk_ball_iso | live | PASS | PASS | +571.5001 | +571.5001 | 2.7e-06% | 1.06e-06 |  |
+| lk_ball_iso | live | PASS | PASS | +571.5001 | +571.5001 | 2.7e-06% | 9.44e-07 |  |
 | lk_ball | live | PASS | PASS | +243.6249 | +243.6249 | 2.6e-07% | 2.97e-06 |  |
 | lk_bridge | live | PASS | PASS | +1.4288 | +1.4288 | 5.7e-05% | 7.43e-07 |  |
 | lk_bridge_uncpl | live | PASS | PASS | +8.2654 | +8.2654 | 2.3e-05% | 3.50e-06 |  |
@@ -141,22 +109,22 @@ Cells: ``PASS`` = both forward and gradient within tolerance; ``F:<x%>`` = forwa
 
 | Term | Mode | Fwd | Grad | E(jax) | E(ref) | rel | max\|dg\| | Note |
 |---|---|:---:|:---:|---:|---:|---:|---:|---|
-| fa_ljatr | live | PASS | PASS | -545.7408 | -545.7408 | 0% | 4.05e-07 |  |
-| fa_ljrep | live | PASS | PASS | +328.0020 | +328.0018 | 3.7e-05% | 2.63e-05 |  |
+| fa_ljatr | live | PASS | PASS | -545.7408 | -545.7408 | 0% | 4.51e-07 |  |
+| fa_ljrep | live | PASS | PASS | +328.0019 | +328.0018 | 2.8e-05% | 2.63e-05 |  |
 | fa_lk | live | PASS | PASS | +358.9670 | +358.9669 | 8.5e-06% | 1.16e-06 |  |
-| fa_elec | live | FAIL | FAIL | -77.0381 | -76.7813 | 0.33% | 2.31e-01 |  |
+| fa_elec | live | PASS | PASS | -76.7813 | -76.7813 | 5e-05% | 1.11e-05 |  |
 | hbond | live | PASS | PASS | -26.7509 | -26.7509 | 2.6e-05% | 1.05e-05 |  |
 | rama | live | PASS | PASS | -6.9824 | -6.9824 | 9.6e-05% | 1.49e-05 |  |
 | omega | live | PASS | FAIL | -1.9648 | -1.9647 | 0.0019% | 5.69e-05 |  |
-| dunbrack_rot | live | PASS | PASS | +96.7915 | +96.7915 | 0% | 9.61e-06 |  |
+| dunbrack_rot | live | PASS | PASS | +96.7915 | +96.7915 | 0% | 9.72e-06 |  |
 | dunbrack_rotdev | live | PASS | PASS | +161.7523 | +161.7522 | 1.9e-05% | 2.87e-04 |  |
-| dunbrack_semirot | live | PASS | PASS | +106.7291 | +106.7291 | 0% | 1.39e-05 |  |
+| dunbrack_semirot | live | PASS | PASS | +106.7291 | +106.7291 | 7.1e-06% | 1.38e-05 |  |
 | cart_lengths | live | FAIL | FAIL | +56.4630 | +0.0000 | 5.6e+15% | 3.48e+01 |  |
 | cart_angles | live | FAIL | FAIL | +88.2552 | +0.0000 | 8.8e+15% | 4.64e+01 |  |
 | cart_torsions | live | PASS | FAIL | +1361.9386 | +1361.9387 | 9e-06% | 4.00e-05 |  |
 | cart_impropers | live | PASS | PASS | +2.4074 | +2.4074 | 0.00017% | 4.23e-05 |  |
 | cart_hxltorsions | live | PASS | PASS | +40.2084 | +40.2084 | 9.5e-06% | 8.66e-07 |  |
-| lk_ball_iso | live | PASS | PASS | +534.0906 | +534.0906 | 1.3e-05% | 1.06e-06 |  |
+| lk_ball_iso | live | PASS | PASS | +534.0906 | +534.0906 | 1.3e-05% | 9.71e-07 |  |
 | lk_ball | live | PASS | PASS | +214.3619 | +214.3619 | 2.5e-06% | 3.09e-06 |  |
 | lk_bridge | live | PASS | FAIL | +1.5220 | +1.5220 | 5.3e-05% | 4.42e-02 |  |
 | lk_bridge_uncpl | live | PASS | FAIL | +10.3213 | +10.3213 | 2.9e-05% | 3.84e-01 |  |
@@ -169,19 +137,19 @@ Cells: ``PASS`` = both forward and gradient within tolerance; ``F:<x%>`` = forwa
 | fa_ljatr | live | PASS | PASS | -247.4706 | -247.4706 | 6.2e-06% | 4.10e-07 |  |
 | fa_ljrep | live | PASS | PASS | +116.4537 | +116.4536 | 3.3e-05% | 3.60e-05 |  |
 | fa_lk | live | PASS | PASS | +184.2703 | +184.2703 | 8.3e-06% | 7.72e-07 |  |
-| fa_elec | live | PASS | PASS | -64.1733 | -64.1734 | 1.2e-05% | 1.03e-05 |  |
+| fa_elec | live | PASS | PASS | -64.1733 | -64.1734 | 1.2e-05% | 1.00e-05 |  |
 | hbond | live | PASS | PASS | -28.9855 | -28.9854 | 2.2e-05% | 8.87e-06 |  |
 | rama | live | PASS | PASS | +7.7670 | +7.7670 | 8.6e-05% | 2.56e-05 |  |
 | omega | live | PASS | PASS | +61.0048 | +61.0049 | 0.00015% | 9.41e-05 |  |
 | dunbrack_rot | live | FAIL | FAIL | +52.9200 | +55.1774 | 4.1% | 5.80e-01 |  |
 | dunbrack_rotdev | live | FAIL | FAIL | +261.6107 | +331.0977 | 21% | 2.48e+01 |  |
 | dunbrack_semirot | live | PASS | PASS | +46.1987 | +46.1987 | 0% | 1.01e-05 |  |
-| cart_lengths | live | FAIL | FAIL | +2726.0583 | +0.0000 | 2.7e+17% | 1.32e+03 |  |
+| cart_lengths | live | FAIL | FAIL | +2726.0586 | +0.0000 | 2.7e+17% | 1.32e+03 |  |
 | cart_angles | live | FAIL | FAIL | +96.4790 | +0.0000 | 9.6e+15% | 5.80e+01 |  |
 | cart_torsions | live | PASS | PASS | +87.5639 | +87.5640 | 3.5e-05% | 2.87e-05 |  |
-| cart_impropers | live | PASS | PASS | +5.2866 | +5.2866 | 0.00023% | 3.44e-05 |  |
-| cart_hxltorsions | live | PASS | PASS | +33.0713 | +33.0713 | 0% | 5.34e-07 |  |
-| lk_ball_iso | live | PASS | PASS | +248.3094 | +248.3094 | 5.9e-06% | 6.84e-07 |  |
+| cart_impropers | live | PASS | PASS | +5.2866 | +5.2866 | 0.00017% | 3.44e-05 |  |
+| cart_hxltorsions | live | PASS | PASS | +33.0713 | +33.0713 | 0% | 5.35e-07 |  |
+| lk_ball_iso | live | PASS | PASS | +248.3094 | +248.3094 | 5.9e-06% | 7.74e-07 |  |
 | lk_ball | live | PASS | PASS | +97.8237 | +97.8237 | 4.3e-06% | 3.77e-06 |  |
 | lk_bridge | live | PASS | FAIL | +1.0634 | +1.0634 | 6.5e-06% | 2.49e-02 |  |
 | lk_bridge_uncpl | live | PASS | FAIL | +5.7136 | +5.7136 | 5.5e-06% | 2.04e-01 |  |
@@ -198,9 +166,9 @@ Cells: ``PASS`` = both forward and gradient within tolerance; ``F:<x%>`` = forwa
 | hbond | live | PASS | PASS | -25.7779 | -25.7778 | 3.5e-05% | 1.66e-05 |  |
 | rama | live | PASS | PASS | +34.5738 | +34.5738 | 2.2e-05% | 1.16e-05 |  |
 | omega | live | PASS | FAIL | +3.6762 | +3.6762 | 0.0011% | 5.86e-05 |  |
-| dunbrack_rot | live | PASS | PASS | +64.7564 | +64.7564 | 0% | 1.58e-05 |  |
-| dunbrack_rotdev | live | PASS | FAIL | +53.5988 | +53.5988 | 7.1e-06% | 4.87e-05 |  |
-| dunbrack_semirot | live | PASS | PASS | +49.1298 | +49.1298 | 0% | 2.19e-05 |  |
+| dunbrack_rot | live | PASS | PASS | +64.7564 | +64.7564 | 0% | 8.58e-06 |  |
+| dunbrack_rotdev | live | PASS | FAIL | +53.5988 | +53.5988 | 0% | 4.87e-05 |  |
+| dunbrack_semirot | live | PASS | PASS | +49.1298 | +49.1298 | 0% | 2.24e-05 |  |
 | cart_lengths | live | FAIL | FAIL | +11.7847 | +0.0000 | 1.2e+15% | 2.15e+01 |  |
 | cart_angles | live | FAIL | FAIL | +24.5095 | +0.0000 | 2.5e+15% | 2.81e+01 |  |
 | cart_torsions | live | PASS | PASS | +20.6197 | +20.6197 | 0.0001% | 2.60e-05 |  |

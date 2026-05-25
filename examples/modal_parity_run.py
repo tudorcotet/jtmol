@@ -294,53 +294,88 @@ def run_one_pdb(pdb_label: str) -> dict:
             assert g.ndim == 3 and g.shape[0] == 1
             return e, g[0]
 
-        # For cart_bonded sub-channels we cannot use the
-        # high-level ScoreFunction: set_weight(_, 0.0) hits a broken
-        # remove_term_for_score_type upstream, AND setting only the
-        # target sub-channel to 1.0 fails to materialize cart_lengths
-        # / cart_angles, AND setting all 5 to 1.0 collapses them into
-        # a single weighted-sum scalar (`size [1]`) so we can't index
-        # per-channel. Fix: bypass ScoreFunction entirely and use the
-        # ``CartBondedEnergyTerm`` directly — its
-        # render_whole_pose_scoring_module returns the unweighted
-        # 5-channel breakdown in the canonical declared order
-        # (cart_lengths, cart_angles, cart_torsions, cart_impropers,
-        # cart_hxltorsions).
+        # For cart_bonded sub-channels we need to get the per-sub-channel
+        # breakdown without the weighted sum. The previous approach of
+        # calling ``term.render_whole_pose_scoring_module(torch_pose)(coords)``
+        # directly returned 0 for cart_lengths and cart_angles in our
+        # earlier float64 + n_poses=1 harness — even though upstream's own
+        # tests use the same call pattern and produce non-zero YAML
+        # goldens (37.76 for term0 cart_lengths on 1ubq). The crucial
+        # differences are:
+        #
+        # * Upstream's test uses ``PoseStackBuilder.from_poses([p1] * 10)``
+        #   to build a 10-pose stack from the single PDB, then feeds
+        #   ``pn.coords.clone()`` (float32 by default) into the scorer
+        #   and writes ``term0..term4 → pose0..pose9`` into YAML.
+        # * Our previous harness built a 1-pose stack via
+        #   ``up_pose_stack(pdb_path, ...)`` and then cast to float64.
+        #
+        # Empirically, the upstream cartbonded kernel returns zero for
+        # cart_lengths and cart_angles channels in the n_poses=1 +
+        # float64 configuration, while it correctly populates the
+        # n_poses=10 + float32 configuration (which is what generates
+        # the YAML golden). To match upstream's test pattern exactly,
+        # we build a 10-stack pose, call the energy term directly, then
+        # take pose0 of the per-channel output. We keep float64 since
+        # the cubic-Hermite gradient parity for cart_torsions /
+        # cart_hxltorsions needs it and torsions still match correctly
+        # in this configuration.
         CART_BONDED_ORDER = [
             "cart_lengths", "cart_angles", "cart_torsions",
             "cart_impropers", "cart_hxltorsions",
         ]
         CART_BONDED_SUBSET = set(CART_BONDED_ORDER)
 
-        # Build the cart_bonded term once per PDB and reuse.
+        # Build the cart_bonded term + 10-pose stack once per PDB and reuse.
         cb_term_ref = {}
 
-        def _build_cart_bonded_term():
+        def _build_cart_bonded_setup():
             if cb_term_ref:
-                return cb_term_ref["term"]
+                return cb_term_ref["term"], cb_term_ref["pose"]
             from tmol.score.cartbonded.cartbonded_energy_term import (
                 CartBondedEnergyTerm,
+            )
+            from tmol.pose.pose_stack_builder import PoseStackBuilder
+            # Match upstream's `test_whole_pose_scoring_10` exactly:
+            # 10-pose stack built via PoseStackBuilder.from_poses. The
+            # cartbonded kernel returns zero for the 2-body (lengths)
+            # and 3-body (angles) channels for n_poses=1 stacks but
+            # works correctly when n_poses >= 2 (the YAML goldens are
+            # generated this way, see
+            # tmol/tests/score/common/test_energy_term.py).
+            pn = PoseStackBuilder.from_poses(
+                [torch_pose] * 10, device=torch.device("cpu")
             )
             term = CartBondedEnergyTerm(
                 ParameterDatabase.get_default(), torch.device("cpu")
             )
-            for bt in torch_pose.packed_block_types.active_block_types:
+            for bt in pn.packed_block_types.active_block_types:
                 term.setup_block_type(bt)
-            term.setup_packed_block_types(torch_pose.packed_block_types)
-            term.setup_poses(torch_pose)
+            term.setup_packed_block_types(pn.packed_block_types)
+            term.setup_poses(pn)
             cb_term_ref["term"] = term
-            return term
+            cb_term_ref["pose"] = pn
+            return term, pn
 
         def _torch_energy_and_grad(name):
             if name in CART_BONDED_SUBSET:
-                term = _build_cart_bonded_term()
-                scorer = term.render_whole_pose_scoring_module(torch_pose)
+                term, pn = _build_cart_bonded_setup()
+                scorer = term.render_whole_pose_scoring_module(pn)
                 # float64 — the cubic-Hermite kink terms
                 # (cart_torsions, cart_hxltorsions) need it.
-                coords = torch_pose.coords.detach().clone().double().requires_grad_(True)
-                per_channel = scorer(coords)  # shape [5, n_poses=1]
+                coords = pn.coords.detach().clone().double().requires_grad_(True)
+                per_channel = scorer(coords)  # shape [5, n_poses=10]
                 target_idx = CART_BONDED_ORDER.index(name)
-                scalar = per_channel.reshape(len(CART_BONDED_ORDER), -1)[target_idx].sum()
+                # All 10 poses are clones of the same PDB, so per_channel
+                # values across the pose dim are identical. We pick
+                # pose0 and compute the scalar from that slice; for the
+                # gradient we propagate through pose0 only so coords.grad
+                # is non-zero on pose0 atoms — then we slice pose0 out
+                # of the returned grad below to match the [n_atoms, 3]
+                # shape expected by the comparison harness.
+                scalar = per_channel.reshape(len(CART_BONDED_ORDER), -1)[
+                    target_idx, 0
+                ]
             else:
                 sfxn = UpScoreFunction(
                     ParameterDatabase.get_default(), torch.device("cpu")
@@ -357,7 +392,12 @@ def run_one_pdb(pdb_label: str) -> dict:
                 g = np.zeros(tuple(coords.shape), dtype=np.float64)
             else:
                 g = coords.grad.detach().cpu().double().numpy()
-            assert g.ndim == 3 and g.shape[0] == 1
+            # For the cart_bonded path, ``coords`` is the 10-pose stack
+            # coords [10, n_atoms_max, 3]. We backwarded a scalar from
+            # pose 0 only, so grad on poses 1..9 is exactly zero. Slice
+            # pose 0 out so the returned shape matches the single-pose
+            # comparison contract ([n_atoms_max, 3]).
+            assert g.ndim == 3
             return e, g[0]
 
         for name in ALL_SCORE_TYPE_NAMES:

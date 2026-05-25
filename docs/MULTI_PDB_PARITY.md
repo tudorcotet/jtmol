@@ -10,31 +10,31 @@ This document exercises the beta_nov2016_cart score function on several PDBs bey
 |---|---:|---:|---:|:---:|---|
 | 1ubq | 1231 | 76 | 0 | no | simple monomer (baseline, matches PARITY.md) |
 | 1qys | 1477 | 92 | 0 | no | larger monomer (Top7 family, designed) |
-| 1BL8 | 1472 | 97 | 1 | no | KcsA chain A (tests different fold / composition) |
-| 1r21 | 1610 | 100 | 3 | no | NMR ensemble with 3 Cys but no SG-SG < 3.5 A |
-| 3plc | 828 | 54 | 8 | yes | cysteine-rich, 6 SG-SG disulfide contacts |
-| 6DMZ_A | 758 | 47 | 8 | yes | cysteine-rich, 5 SG-SG disulfide contacts |
+| 1BL8 | 0 | 0 | 0 | no | KcsA chain A (tests different fold / composition) |
+| 1r21 | 1615 | 100 | 3 | no | NMR ensemble with 3 Cys but no SG-SG < 3.5 A |
+| 3plc | 820 | 54 | 8 | yes | cysteine-rich, 6 SG-SG disulfide contacts |
+| 6DMZ_A | 750 | 47 | 8 | yes | cysteine-rich, 5 SG-SG disulfide contacts |
 
 ## Per-term energies
 
 | PDB | status | fa_ljatr | fa_ljrep | fa_lk | fa_elec | hbond | rama | omega | dunbrack_rot | dunbrack_rotdev | dunbrack_semirot | cart_lengths | cart_angles | cart_torsions | cart_impropers | cart_hxltorsions | lk_ball_iso | lk_ball | lk_bridge | lk_bridge_uncpl | ref |
 |---|:---:| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1ubq | OK | -417.958 | +240.715 | +298.277 | -136.292 | -55.221 | -12.743 | +4.100 | +70.650 | +240.310 | +99.661 | +37.764 | +183.570 | +46.024 | +9.431 | +47.420 | +422.039 | +172.196 | +1.579 | +10.995 | -41.275 |
-| 1qys | OK | -522.174 | +423.904 | +383.167 | -156.821 | -73.190 | +35.867 | +2.227 | +62.513 | +206.330 | +156.914 | +9.819 | +47.908 | +13.992 | +3.195 | +51.525 | +571.500 | +243.625 | +1.429 | +8.265 | -18.488 |
-| 1BL8 | OK | -603.891 | +34444.066 | +454.524 | -22.092 | -0.326 | +131.205 | +0.087 | +85.455 | +707.742 | +100.044 | +435044.938 | +46307.836 | +12717.094 | +2843.515 | +46.878 | +686.750 | +207.081 | +0.590 | +4.256 | +69.960 |
-| 1r21 | OK | -535.410 | +319.816 | +358.568 | -74.202 | -27.526 | +7.745 | -0.970 | +87.867 | +340.934 | +121.422 | +58.380 | +92.576 | +1384.194 | +2.540 | +40.264 | +529.685 | +212.687 | +1.679 | +11.062 | -38.498 |
-| 3plc | OK | -259.855 | +2931.665 | +183.556 | -69.243 | -30.451 | -2.626 | +52.284 | +52.036 | +296.022 | +46.358 | +2925.244 | +382.450 | +75.197 | +5.531 | +33.071 | +250.022 | +97.991 | +1.063 | +5.714 | -8.992 |
-| 6DMZ_A | OK | -261.999 | +3380.023 | +194.751 | -71.928 | -25.601 | +33.516 | +4.582 | +64.756 | +53.599 | +49.130 | +2532.432 | +284.298 | +24.173 | +2.525 | +32.181 | +268.029 | +100.439 | +0.775 | +5.789 | +8.921 |
+| 1ubq | OK | -417.958 | +240.715 | +298.277 | -136.292 | -55.676 | -12.743 | +4.100 | +70.650 | +240.310 | +99.661 | +37.764 | +183.570 | +46.024 | +9.431 | +47.420 | +422.039 | +172.196 | +1.579 | +10.995 | -41.275 |
+| 1qys | OK | -522.174 | +423.904 | +383.167 | -156.821 | -73.456 | +35.867 | +2.227 | +62.513 | +206.330 | +156.914 | +9.819 | +47.908 | +13.992 | +3.195 | +51.525 | +571.500 | +243.625 | +1.429 | +8.265 | -18.488 |
+| 1BL8 | load_error: pose_stack_from_pdb failed: ValueError('Error: missing non-leaf atom CG on residue 4 ARG on pose 0 real res? True\nError: missing non-leaf atom CD on residue 4 ARG on pose 0 real res? True\nError: missing non-leaf atom NE on residue 4 ARG on pose 0 real res? True\nError: missing non-leaf atom CZ on residue 4 ARG on pose 0 real res? True\nError: missing non-leaf atom NH1 on residue 4 ARG on pose 0 real res? True\nError: missing non-leaf atom NH2 on residue 4 ARG on pose 0 real res? True\nError: missing non-leaf atom CD1 on residue 37 ILE on pose 0 real res? True\nError: missing non-leaf atom CG on residue 41 ARG on pose 0 real res? True\nError: missing non-leaf atom CD on residue 41 ARG on pose 0 real res? True\nError: missing non-leaf atom NE on residue 41 ARG on pose 0 real res? True\nError: missing non-leaf atom CZ on residue 41 ARG on pose 0 real res? True\nError: missing non-leaf atom NH1 on residue 41 ARG on pose 0 real res? True\nError: missing non-leaf atom NH2 on residue 41 ARG on pose 0 real res? True\nError: missing non-leaf atom CG on residue 48 GLU on pose 0 real res? True\nError: missing non-leaf atom CD on residue 48 GLU on pose 0 real res? True\nError: missing non-leaf atom OE1 on residue 48 GLU on pose 0 real res? True\nError: missing non-leaf atom CZ on residue 94 ARG on pose 0 real res? True\nError: missing non-leaf atom NH1 on residue 94 ARG on pose 0 real res? True\nError: missing non-leaf atom NH2 on residue 94 ARG on pose 0 real res? True') | | | | | | | | | | | | | | | | | | | | |
+| 1r21 | OK | -545.741 | +328.002 | +358.967 | -76.781 | -26.751 | -6.982 | -1.965 | +96.791 | +161.752 | +106.729 | +56.463 | +88.255 | +1361.938 | +2.407 | +40.208 | +534.091 | +214.362 | +1.522 | +10.321 | -39.170 |
+| 3plc | OK | -247.471 | +116.454 | +184.270 | -64.173 | -28.985 | +7.767 | +61.005 | +52.920 | +261.611 | +46.199 | +2726.059 | +96.479 | +87.564 | +5.287 | +33.071 | +248.309 | +97.824 | +1.063 | +5.714 | -8.992 |
+| 6DMZ_A | OK | -250.297 | +611.219 | +195.480 | -69.532 | -25.778 | +34.574 | +3.676 | +64.756 | +53.599 | +49.130 | +11.785 | +24.510 | +20.620 | +2.104 | +32.181 | +266.525 | +100.439 | +0.775 | +5.789 | +8.921 |
 
 ## 1ubq vs upstream goldens
 
-Goldens loaded from ``tmol/tmol/tests/data/term_baselines/<Term>/test_whole_pose_scoring_10.yaml`` (pose0 entry — all 10 poses are identical copies). hbond / cart_lengths rows reflect the current bond-graph B/B0 walk; the original snapshot showed a -55.2215 hbond value from an older implementation.
+Goldens loaded from ``tmol/tmol/tests/data/term_baselines/<Term>/test_whole_pose_scoring_10.yaml`` (pose0 entry — all 10 poses are identical copies).
 
 | Term | tmol_jax | upstream | abs err | % err |
 |---|---:|---:|---:|---:|
 | fa_ljatr | -417.9583 | -417.9583 | 0.0001 | 0.000% |
 | fa_ljrep | +240.7147 | +240.7147 | 0.0000 | 0.000% |
-| fa_lk | +298.2765 | +298.2765 | 0.0000 | 0.000% |
+| fa_lk | +298.2766 | +298.2765 | 0.0000 | 0.000% |
 | fa_elec | -136.2925 | -136.2925 | 0.0000 | 0.000% |
 | hbond | -55.6756 | -55.6756 | 0.0000 | 0.000% |
 | rama | -12.7434 | -12.7434 | 0.0000 | 0.000% |
@@ -47,7 +47,7 @@ Goldens loaded from ``tmol/tmol/tests/data/term_baselines/<Term>/test_whole_pose
 | cart_torsions | +46.0236 | +46.0236 | 0.0000 | 0.000% |
 | cart_impropers | +9.4305 | +9.4305 | 0.0000 | 0.000% |
 | cart_hxltorsions | +47.4197 | +47.4197 | 0.0000 | 0.000% |
-| lk_ball_iso | +422.0395 | +422.0396 | 0.0001 | 0.000% |
+| lk_ball_iso | +422.0394 | +422.0396 | 0.0002 | 0.000% |
 | lk_ball | +172.1964 | +172.1964 | 0.0000 | 0.000% |
 | lk_bridge | +1.5786 | +1.5786 | 0.0000 | 0.000% |
 | lk_bridge_uncpl | +10.9946 | +10.9946 | 0.0000 | 0.000% |
@@ -61,7 +61,7 @@ tmol_jax's :class:`DisulfideEnergyTerm` detects Cys residues via block-type ``na
 |---|---:|:---:|---:|:---:|---|
 | 1ubq | 0 | no | +0.0000 | 0 | no Cys — zero is correct |
 | 1qys | 0 | no | +0.0000 | 0 | no Cys — zero is correct |
-| 1BL8 | 1 | no | +0.0000 | 0 | Cys present but all SG-SG > 3.5 A |
+| 1BL8 | 0 | no | ? | 0 | no Cys — zero is correct |
 | 1r21 | 3 | no | +0.0000 | 0 | Cys present but all SG-SG > 3.5 A |
 | 3plc | 8 | yes | -3.2572 | <0 | SG-SG pairs at disulfide distance |
 | 6DMZ_A | 8 | yes | -1.7704 | <0 | SG-SG pairs at disulfide distance |
@@ -74,7 +74,7 @@ For every PDB we take ``jax.grad(lambda c: sfxn(ps, coords_override=c).sum())(ps
 |---|:---:|---|
 | 1ubq | yes | (none) |
 | 1qys | yes | (none) |
-| 1BL8 | yes | (none) |
+| 1BL8 | n/a | pose_stack_from_pdb failed: ValueError('Error: missing non-leaf atom CG on residue 4 ARG on pose 0 real res? True\nError: missing non-leaf atom CD on residue 4 ARG on pose 0 real res? True\nError: missing non-leaf atom NE on residue 4 ARG on pose 0 real res? True\nError: missing non-leaf atom CZ on residue 4 ARG on pose 0 real res? True\nError: missing non-leaf atom NH1 on residue 4 ARG on pose 0 real res? True\nError: missing non-leaf atom NH2 on residue 4 ARG on pose 0 real res? True\nError: missing non-leaf atom CD1 on residue 37 ILE on pose 0 real res? True\nError: missing non-leaf atom CG on residue 41 ARG on pose 0 real res? True\nError: missing non-leaf atom CD on residue 41 ARG on pose 0 real res? True\nError: missing non-leaf atom NE on residue 41 ARG on pose 0 real res? True\nError: missing non-leaf atom CZ on residue 41 ARG on pose 0 real res? True\nError: missing non-leaf atom NH1 on residue 41 ARG on pose 0 real res? True\nError: missing non-leaf atom NH2 on residue 41 ARG on pose 0 real res? True\nError: missing non-leaf atom CG on residue 48 GLU on pose 0 real res? True\nError: missing non-leaf atom CD on residue 48 GLU on pose 0 real res? True\nError: missing non-leaf atom OE1 on residue 48 GLU on pose 0 real res? True\nError: missing non-leaf atom CZ on residue 94 ARG on pose 0 real res? True\nError: missing non-leaf atom NH1 on residue 94 ARG on pose 0 real res? True\nError: missing non-leaf atom NH2 on residue 94 ARG on pose 0 real res? True') |
 | 1r21 | yes | (none) |
 | 3plc | yes | (none) |
 | 6DMZ_A | yes | (none) |
