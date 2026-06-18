@@ -180,3 +180,64 @@ Cells: ``PASS`` = both forward and gradient within tolerance; ``F:<x%>`` = forwa
 | lk_bridge_uncpl | live | PASS | FAIL | +5.7893 | +5.7893 | 2.6e-05% | 8.01e-02 |  |
 | ref | live | PASS | PASS | +8.9209 | +8.9209 | 2.1e-05% | 0.00e+00 |  |
 
+## Known residual: 3plc dunbrack_rot (4.1%) / dunbrack_rotdev (21%)
+
+Localised to the two residues flanking the missing-density gap in 3plc:
+**THR26** (block 25, 0-idx) and **ASP35** (block 26, 0-idx). PDB residue
+numbers 27..34 are absent from the deposited coordinates; the chain
+atoms HA(THR26) and O(ASP35) are 2.26 A apart so neither upstream's
+biotite loader nor jtmol's IO drops the polymer bond (see commit
+67ac14a). With the gap-spanning bond wired on both sides, both engines
+synthesize phi/psi across the gap:
+
+```
+THR26: phi=-130.34 deg, psi=+139.99 deg (psi is synthesized: N(THR26)-CA-C-N(ASP35))
+ASP35: phi= +14.18 deg, psi=+157.53 deg (phi is synthesized: C(THR26)-N(ASP35)-CA-C)
+```
+
+**What is identical between jtmol and upstream:**
+- Dihedral atoms resolved by both sides for these two residues (verified
+  by tracing `pose_stack_inter_block_connections` + `conn_atoms` /
+  `block_type_atom_downstream_of_conn`; the gap-bridging fix in 67ac14a
+  brought the two wirings into agreement).
+- Synthesized phi/psi values to 4 decimal places (`dihedral_angle` is
+  the same atan2 formulation).
+- rotbin classification: THR26 chi1=112.46 deg -> g+ (bin 0); ASP35
+  chi1=-75 deg -> g- (bin 2).
+- B-spline coefficient pole, normalisation lambda, weight polynomial,
+  and 4-cell periodic wrap (line-for-line port of `bspline.hh`).
+- Float32 vs float64 prefilter: refiltering the THR g+ mean/sdev tables
+  in float32 (matching upstream) vs float64 (current jtmol) gives
+  coefficient diffs at the 1e-7 level — five orders of magnitude too
+  small to explain a 21% scoring gap.
+- For the THR26 g+ rotamer at the synthesized (phi, psi), the
+  interpolated `mean = 60.116 deg`, `sdev = 8.394 deg`. With chi1 =
+  112.46 deg, the penalty is `(52.34 deg)^2 / (2 * 8.39 deg^2) =
+  19.44`, matching the jtmol total to float precision.
+
+**Conclusion of the investigation:**
+The b-spline implementation and dihedral-atom selection are
+mathematically identical between jtmol and upstream at these two
+residues. We cannot reproduce upstream's higher value locally without
+the upstream compiled C++ extension (the bundled `tmol/` checkout is
+import-only). The most likely sources of the 4.1% / 21% gap recorded
+above are:
+
+1. The Modal A100 run that produced the upstream column may have used
+   subtly different input coordinates (float32 vs float64 promotion at
+   a different stage of the load pipeline), or
+2. The stored numbers are stale and a fresh sweep would close the gap.
+
+Either way, the gap is **localised to two residues with nonsensical
+gap-synthesized phi/psi** and does **not** reflect a physical-residue
+scoring bug. Rama / omega / cart_torsions on the same two residues all
+PASS, which is what the gap-bridging fix in 67ac14a was actually
+chasing.
+
+**Decision: defer.** Skipping the gap-bridging residues' dunbrack
+contribution (Option A) would push jtmol *further* from upstream, not
+closer. Tracking down the remaining float32-precision divergence (Option
+B) is not actionable without a working upstream build. The four other
+PDBs in the panel hit dunbrack parity to <= 6e-06%; this residual is
+isolated to 3plc.
+
