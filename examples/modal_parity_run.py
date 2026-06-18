@@ -367,15 +367,83 @@ def run_one_pdb(pdb_label: str) -> dict:
         # (they should match the YAML golden ~37.76 / ~183.57 for 1ubq).
         cb_logged = {"done": False}
 
+        # Cache the YAML goldens for the broken cart_bonded sub-channels.
+        # The YAML files are bundled in upstream tmol's tests/data tree at
+        # /opt/tmol_src/tmol/tests/data/term_baselines/CartBondedEnergyTerm/
+        # test_whole_pose_scoring_10.yaml. Each YAML is a `{termN:
+        # {poseM: value}}` dict where termN matches CartBondedEnergyTerm's
+        # score_types_provided() order:
+        #   term0 = cart_lengths, term1 = cart_angles, ...
+        # The 1ubq goldens exist there; other PDBs don't have per-PDB
+        # YAML files (they were generated per-fixture in upstream's test
+        # suite). For PDBs without a golden we return None and the cell
+        # is reported as SKIP.
+        _CART_BONDED_YAML_PATH = (
+            "/opt/tmol_src/tmol/tests/data/term_baselines/"
+            "CartBondedEnergyTerm/test_whole_pose_scoring_10.yaml"
+        )
+        _CART_BONDED_YAML_INDEX = {
+            "cart_lengths": 0,
+            "cart_angles": 1,
+            "cart_torsions": 2,
+            "cart_impropers": 3,
+            "cart_hxltorsions": 4,
+        }
+        _cart_bonded_yaml_cache: dict = {}
+
+        def _load_cart_bonded_yaml_golden(channel: str, pdb_label: str):
+            """Return the upstream YAML golden for ``channel`` on
+            ``pdb_label`` if available, else None.
+
+            Only 1ubq has a bundled YAML (it's the canonical test PDB).
+            For other PDBs we return None and the cell falls back to
+            "SKIP" in the parity report.
+            """
+            if pdb_label != "1ubq":
+                return None
+            if not _cart_bonded_yaml_cache:
+                try:
+                    import yaml
+                    with open(_CART_BONDED_YAML_PATH) as f:
+                        data = yaml.safe_load(f)
+                    _cart_bonded_yaml_cache.update(data)
+                except Exception as exc:
+                    print(
+                        f"[{pdb_label}] WARN: cart_bonded YAML load failed: {exc}",
+                        flush=True,
+                    )
+                    return None
+            term_key = f"term{_CART_BONDED_YAML_INDEX[channel]}"
+            try:
+                return float(_cart_bonded_yaml_cache[term_key]["pose0"])
+            except (KeyError, TypeError):
+                return None
+
         def _torch_energy_and_grad(name):
             if name in CART_BONDED_SUBSET:
                 term, pn = _build_cart_bonded_setup()
                 scorer = term.render_whole_pose_scoring_module(pn)
                 # float32 — match upstream's test_whole_pose_scoring_10
-                # exactly. The double instantiation of the compiled
-                # cartbonded kernel on v0.1.22 silently zeros the
-                # length/angle sub-channels; float32 is the path that
-                # produces the YAML goldens.
+                # exactly. The compiled cartbonded kernel in v0.1.22
+                # silently zeros the 2-body (cart_lengths) and 3-body
+                # (cart_angles) sub-channels in BOTH dtypes — confirmed
+                # by the diagnostic print below. The 4-body subgraphs
+                # (torsions, impropers, hxltorsions) materialize fine.
+                # This is a real bug in the v0.1.22 wheel's compiled
+                # kernel — the YAML goldens at
+                # tmol/tests/data/term_baselines/CartBondedEnergyTerm/
+                # were produced by a different code path (probably a
+                # test fixture with subgraph pre-population) and contain
+                # the correct values (e.g. 1ubq cart_lengths=+37.7623,
+                # cart_angles=+183.5697). For cart_lengths and
+                # cart_angles we use the YAML golden as the upstream
+                # reference instead of the broken live kernel; the live
+                # kernel is still the reference for the 3 working
+                # sub-channels. Gradient comparison for length/angle
+                # cells becomes meaningless (no live upstream gradient
+                # to compare against), so we return all-zero gradient
+                # and mark those rows with the harness note "upstream
+                # wheel returns 0 for this channel".
                 coords = pn.coords.detach().clone().requires_grad_(True)
                 per_channel = scorer(coords)  # shape [5, n_poses=10]
                 if not cb_logged["done"]:
@@ -394,10 +462,30 @@ def run_one_pdb(pdb_label: str) -> dict:
                     )
                     cb_logged["done"] = True
                 target_idx = CART_BONDED_ORDER.index(name)
-                # All 10 poses are clones of the same PDB, so per_channel
-                # values across the pose dim are identical. We pick
-                # pose 0 and propagate gradient through it only; poses
-                # 1..9 contribute zero grad and we slice them out below.
+                # If upstream's live kernel returns 0 for this channel
+                # (true for cart_lengths and cart_angles on v0.1.22),
+                # fall back to the YAML golden.
+                live_value = float(
+                    per_channel.reshape(len(CART_BONDED_ORDER), -1)[target_idx, 0]
+                    .detach()
+                    .cpu()
+                    .float()
+                    .item()
+                )
+                if abs(live_value) < 1e-9 and name in {"cart_lengths", "cart_angles"}:
+                    yaml_e = _load_cart_bonded_yaml_golden(name, pdb_label)
+                    if yaml_e is not None:
+                        # No upstream gradient available for the broken
+                        # channel — return YAML forward + zero gradient
+                        # (the gradient column for these cells will be
+                        # PASS-with-zero-vs-zero, treated by the
+                        # comparator as bit-exact when |g_jax| is small
+                        # OR as honestly-unknown otherwise; we set a
+                        # note below so readers can identify these).
+                        g = np.zeros(tuple(coords.shape), dtype=np.float64)
+                        return yaml_e, g[0]
+                # Live channel works (torsions / impropers /
+                # hxltorsions): standard backward path.
                 scalar = per_channel.reshape(len(CART_BONDED_ORDER), -1)[
                     target_idx, 0
                 ]
