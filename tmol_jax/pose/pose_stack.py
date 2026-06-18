@@ -264,7 +264,13 @@ class PoseStack:
         via :func:`block_coord_offset_from_counts`.
         """
 
-        coords_j = as_jnp(coords, dtype=jnp.float32)
+        # Use the canonical float dtype so the coords tensor honors
+        # ``jax_enable_x64`` (parity harness sets this) and stays at
+        # float32 by default. See ``docs/PARITY.md`` cubic-Hermite kink
+        # discussion.
+        import jax as _jax
+        _float_dtype = _jax.dtypes.canonicalize_dtype(jnp.float64)
+        coords_j = as_jnp(coords, dtype=_float_dtype)
         bti = as_jnp(block_type_ind, dtype=jnp.int32)
         irc = as_jnp(inter_residue_connections, dtype=jnp.int32)
         ibs = as_jnp(inter_block_bondsep, dtype=jnp.int32)

@@ -559,9 +559,18 @@ class PoseStackBuilder:
         block_coord_offset_j = jnp.asarray(block_coord_offset, dtype=jnp.int32)
         block_coord_offset64_j = block_coord_offset_j.astype(jnp.int64)
 
+        # Use the canonical float dtype so the coords tensor honors
+        # ``jax_enable_x64``: float64 when the caller has enabled x64
+        # (e.g. the upstream-parity harness) and float32 by default.
+        # Closes the residual ~1e-4 cubic-Hermite-kink gradient diff
+        # documented in ``docs/PARITY.md`` — the formula is bit-exact in
+        # float64; the gap was float32 roundoff in the loader-emitted
+        # coords tensor.
+        import jax as _jax
+        _float_dtype = _jax.dtypes.canonicalize_dtype(jnp.float64)
         return PoseStack(
             packed_block_types=pbt,
-            coords=jnp.asarray(coords, dtype=jnp.float32),
+            coords=jnp.asarray(coords, dtype=_float_dtype),
             block_coord_offset=block_coord_offset_j,
             block_coord_offset64=block_coord_offset64_j,
             inter_residue_connections=jnp.asarray(
@@ -641,9 +650,13 @@ class PoseStackBuilder:
 
         block_coord_offset_j = jnp.asarray(block_coord_offset, dtype=jnp.int32)
 
+        # See ``from_block_types_and_coords`` for why we use the
+        # canonical float dtype rather than a hardcoded ``jnp.float32``.
+        import jax as _jax
+        _float_dtype = _jax.dtypes.canonicalize_dtype(jnp.float64)
         return PoseStack(
             packed_block_types=pbt,
-            coords=jnp.asarray(coords, dtype=jnp.float32),
+            coords=jnp.asarray(coords, dtype=_float_dtype),
             block_coord_offset=block_coord_offset_j,
             block_coord_offset64=block_coord_offset_j.astype(jnp.int64),
             inter_residue_connections=jnp.asarray(
