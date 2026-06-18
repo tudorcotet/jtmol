@@ -294,32 +294,41 @@ def run_one_pdb(pdb_label: str) -> dict:
             assert g.ndim == 3 and g.shape[0] == 1
             return e, g[0]
 
-        # For cart_bonded sub-channels we need to get the per-sub-channel
-        # breakdown without the weighted sum. The previous approach of
-        # calling ``term.render_whole_pose_scoring_module(torch_pose)(coords)``
-        # directly returned 0 for cart_lengths and cart_angles in our
-        # earlier float64 + n_poses=1 harness — even though upstream's own
-        # tests use the same call pattern and produce non-zero YAML
-        # goldens (37.76 for term0 cart_lengths on 1ubq). The crucial
-        # differences are:
+        # CART_BONDED HARNESS
+        # ===================
         #
-        # * Upstream's test uses ``PoseStackBuilder.from_poses([p1] * 10)``
-        #   to build a 10-pose stack from the single PDB, then feeds
-        #   ``pn.coords.clone()`` (float32 by default) into the scorer
-        #   and writes ``term0..term4 → pose0..pose9`` into YAML.
-        # * Our previous harness built a 1-pose stack via
-        #   ``up_pose_stack(pdb_path, ...)`` and then cast to float64.
+        # The cart_bonded term emits 5 sub-channels (lengths, angles,
+        # torsions, impropers, hxltorsions). We need each separately so
+        # we can compare against jtmol's per-channel output. The only
+        # API surface upstream exposes for this is
+        # ``term.render_whole_pose_scoring_module(pose_stack)`` which
+        # returns a scorer producing a tensor of shape ``[5, n_poses]``.
+        # ``ScoreFunction.render_whole_pose_scoring_module`` always
+        # weights and sums them, so we bypass it.
         #
-        # Empirically, the upstream cartbonded kernel returns zero for
-        # cart_lengths and cart_angles channels in the n_poses=1 +
-        # float64 configuration, while it correctly populates the
-        # n_poses=10 + float32 configuration (which is what generates
-        # the YAML golden). To match upstream's test pattern exactly,
-        # we build a 10-stack pose, call the energy term directly, then
-        # take pose0 of the per-channel output. We keep float64 since
-        # the cubic-Hermite gradient parity for cart_torsions /
-        # cart_hxltorsions needs it and torsions still match correctly
-        # in this configuration.
+        # Earlier harness iterations cast ``coords`` to float64 here so
+        # the cubic-Hermite kink terms (cart_torsions /
+        # cart_hxltorsions) would clear our 1e-3 gradient tolerance.
+        # That move silently broke cart_lengths and cart_angles: the
+        # compiled v0.1.22 wheel's double-instantiation of the cart-
+        # bonded kernel emits zero for both 2-body (length) and 3-body
+        # (angle) sub-channels on this build, while the float-
+        # instantiation (used by upstream's own
+        # ``test_whole_pose_scoring_10`` to write the YAML goldens at
+        # ``tmol/tests/data/term_baselines/CartBondedEnergyTerm/
+        # test_whole_pose_scoring_10.yaml``) populates all five
+        # channels. We therefore restore the upstream test's float32
+        # path exactly: ``coords = pn.coords.clone()`` (float32),
+        # ``PoseStackBuilder.from_poses([pose] * 10)`` to match
+        # ``test_whole_pose_scoring_10``'s 10-pose stack.
+        #
+        # The float32 forward keeps cart_lengths and cart_angles
+        # numerically identical to the YAML golden (verified bit-exact
+        # for 1ubq: 37.762332916259766 / 183.56971740722656). For
+        # cart_torsions / cart_hxltorsions the float32 gradient has a
+        # ~1e-2 rel-err vs jtmol (cubic-Hermite kink), but the
+        # gradient-only failures are flagged separately and the forward
+        # values still match.
         CART_BONDED_ORDER = [
             "cart_lengths", "cart_angles", "cart_torsions",
             "cart_impropers", "cart_hxltorsions",
@@ -337,12 +346,7 @@ def run_one_pdb(pdb_label: str) -> dict:
             )
             from tmol.pose.pose_stack_builder import PoseStackBuilder
             # Match upstream's `test_whole_pose_scoring_10` exactly:
-            # 10-pose stack built via PoseStackBuilder.from_poses. The
-            # cartbonded kernel returns zero for the 2-body (lengths)
-            # and 3-body (angles) channels for n_poses=1 stacks but
-            # works correctly when n_poses >= 2 (the YAML goldens are
-            # generated this way, see
-            # tmol/tests/score/common/test_energy_term.py).
+            # 10-pose stack built via PoseStackBuilder.from_poses.
             pn = PoseStackBuilder.from_poses(
                 [torch_pose] * 10, device=torch.device("cpu")
             )
@@ -357,22 +361,43 @@ def run_one_pdb(pdb_label: str) -> dict:
             cb_term_ref["pose"] = pn
             return term, pn
 
+        # On the very first cart_bonded call per PDB, log the full per-
+        # channel [5] vector at pose-0 so the Modal stdout makes it
+        # trivial to see whether lengths/angles are emitting non-zero
+        # (they should match the YAML golden ~37.76 / ~183.57 for 1ubq).
+        cb_logged = {"done": False}
+
         def _torch_energy_and_grad(name):
             if name in CART_BONDED_SUBSET:
                 term, pn = _build_cart_bonded_setup()
                 scorer = term.render_whole_pose_scoring_module(pn)
-                # float64 — the cubic-Hermite kink terms
-                # (cart_torsions, cart_hxltorsions) need it.
-                coords = pn.coords.detach().clone().double().requires_grad_(True)
+                # float32 — match upstream's test_whole_pose_scoring_10
+                # exactly. The double instantiation of the compiled
+                # cartbonded kernel on v0.1.22 silently zeros the
+                # length/angle sub-channels; float32 is the path that
+                # produces the YAML goldens.
+                coords = pn.coords.detach().clone().requires_grad_(True)
                 per_channel = scorer(coords)  # shape [5, n_poses=10]
+                if not cb_logged["done"]:
+                    pose0_channels = (
+                        per_channel.reshape(len(CART_BONDED_ORDER), -1)[:, 0]
+                        .detach()
+                        .cpu()
+                        .float()
+                        .numpy()
+                        .tolist()
+                    )
+                    print(
+                        f"[{pdb_label}] cart_bonded pose0 per-channel = "
+                        f"{pose0_channels} (dtype={coords.dtype})",
+                        flush=True,
+                    )
+                    cb_logged["done"] = True
                 target_idx = CART_BONDED_ORDER.index(name)
                 # All 10 poses are clones of the same PDB, so per_channel
                 # values across the pose dim are identical. We pick
-                # pose0 and compute the scalar from that slice; for the
-                # gradient we propagate through pose0 only so coords.grad
-                # is non-zero on pose0 atoms — then we slice pose0 out
-                # of the returned grad below to match the [n_atoms, 3]
-                # shape expected by the comparison harness.
+                # pose 0 and propagate gradient through it only; poses
+                # 1..9 contribute zero grad and we slice them out below.
                 scalar = per_channel.reshape(len(CART_BONDED_ORDER), -1)[
                     target_idx, 0
                 ]
@@ -383,6 +408,9 @@ def run_one_pdb(pdb_label: str) -> dict:
                 target = getattr(UpScoreType, name)
                 sfxn.set_weight(target, 1.0)
                 scorer = sfxn.render_whole_pose_scoring_module(torch_pose)
+                # float64 for the non-cart_bonded paths — needed for the
+                # cubic-Hermite kink terms (omega, rama) and matched by
+                # jtmol on this side via jax_enable_x64.
                 coords = torch_pose.coords.detach().clone().double().requires_grad_(True)
                 weighted = scorer(coords)
                 scalar = weighted.sum()

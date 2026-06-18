@@ -266,12 +266,14 @@ def _build_cart_bonded_setup(pose, up: _Upstream):
     """Build a 10-pose stack + CartBondedEnergyTerm matching upstream's
     ``test_whole_pose_scoring_10`` test pattern.
 
-    The upstream cartbonded kernel returns zero for the cart_lengths
-    (2-body) and cart_angles (3-body) channels when ``n_poses == 1``,
-    while it correctly populates them for ``n_poses >= 2`` (the YAML
-    goldens are generated via ``PoseStackBuilder.from_poses([p] * 10)``;
-    see ``tmol/tests/score/common/test_energy_term.py``). Replicating
-    that 10-stack pattern restores parity.
+    Upstream's own YAML goldens (under ``tmol/tests/data/term_baselines/
+    CartBondedEnergyTerm/test_whole_pose_scoring_10.yaml``) are
+    generated via ``PoseStackBuilder.from_poses([p] * 10)`` + a float32
+    ``pn.coords.clone()`` scorer call. Replicating that exact pattern
+    (including the float32 dtype — see ``_torch_energy_and_grad``)
+    restores parity on the cart_lengths and cart_angles sub-channels,
+    which the v0.1.22 wheel's double-instantiation of the cart-bonded
+    kernel silently zeros.
     """
     key = id(pose)
     if key in _CB_TERM_CACHE:
@@ -312,7 +314,12 @@ def _torch_energy_and_grad(pose, target_name, up: _Upstream):
     if target_name in _CART_BONDED_SUBSET:
         term, pn = _build_cart_bonded_setup(pose, up)
         scorer = term.render_whole_pose_scoring_module(pn)
-        coords = pn.coords.detach().clone().double().requires_grad_(True)
+        # float32 — match upstream's ``test_whole_pose_scoring_10``
+        # exactly. The compiled v0.1.22 wheel's double-instantiation
+        # of the cart-bonded kernel silently emits zero for the length
+        # and angle sub-channels; the float-instantiation (the one
+        # that wrote the YAML goldens) populates all five channels.
+        coords = pn.coords.detach().clone().requires_grad_(True)
         per_channel = scorer(coords)  # [5, 10]
         target_idx = _CART_BONDED_ORDER.index(target_name)
         # All 10 stacked poses are clones of the same PDB. We pick
