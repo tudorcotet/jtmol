@@ -72,6 +72,12 @@ Reproducer and analysis in
 [`docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md`](docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md).
 We haven't filed it upstream yet.
 
+That was the first of six upstream bugs we have catalogued while
+building jtmol. The full list is in
+[`docs/UPSTREAM_BUGS.md`](docs/UPSTREAM_BUGS.md) with reproducers and
+workarounds; each one drives a category of "expected mismatch" cell
+in the parity matrix at [`docs/UPSTREAM_PARITY.md`](docs/UPSTREAM_PARITY.md).
+
 ## What's in the package
 
 | Module | What it does |
@@ -154,7 +160,8 @@ Boltz-2 losses via `+` / `*`.
 | [`docs/PORT_NOTES.md`](docs/PORT_NOTES.md) | Gaps and behavioural differences vs upstream |
 | [`docs/MOSAIC_INTEGRATION.md`](docs/MOSAIC_INTEGRATION.md) | Use jtmol as a binding-affinity loss in mosaic / Boltz-2; affinity-tuning recipe |
 | [`docs/EXTRA_SCORES.md`](docs/EXTRA_SCORES.md) | Extra differentiable interface scores (SS99, TransComp, BUH, PRODIGY, DFIRE) and the three-channel KineticsTuningLoss |
-| [`docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md`](docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md) | A real gradient bug we found in upstream, with reproducer |
+| [`docs/UPSTREAM_BUGS.md`](docs/UPSTREAM_BUGS.md) | Catalogue of every upstream tmol bug we found while building jtmol (6 distinct issues, each with a reproducer) |
+| [`docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md`](docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md) | The first-found `lk_bridge_uncpl` adjoint bug, full reproducer |
 
 ### Worked examples
 

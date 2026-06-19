@@ -10,6 +10,13 @@
   - 6DMZ_A: designed small protein
 - Deferred: 1BL8 (upstream refuses to load: missing non-leaf atom CG on residue 4 ARG).
 
+**Where to read about the cells flagged as known upstream-side bugs:**
+see [`UPSTREAM_BUGS.md`](UPSTREAM_BUGS.md) for the full catalogue
+(`lk_bridge_uncpl` adjoint, `cart_lengths` / `cart_angles` kernel
+zeros, `set_weight(_, 0)` AttributeError, CYD param hash-miss, kink
+float32 adjoint floor, 3plc dunbrack b-spline divergence at synthesized
+phi/psi).
+
 ## Summary
 
 - Total cells: **100**

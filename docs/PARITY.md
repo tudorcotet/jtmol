@@ -65,6 +65,15 @@ A few notes on the entries that aren't pure autodiff:
   diff ~2.7e-4. Switching to bicubic is a self-contained future
   improvement.
 
+All five categories of expected mismatch with the live upstream wheel
+are catalogued in [`UPSTREAM_BUGS.md`](UPSTREAM_BUGS.md) — including
+the `cart_lengths` / `cart_angles` kernel zeros (entry 2), the
+`set_weight(_, 0)` AttributeError (entry 3), the CYD param hash-miss
+we deliberately replicate (entry 4), and the cubic-Hermite kink
+float32-internal-adjoint floor that explains the ~1e-4 grad residual
+on `omega` / `cart_torsions` / `cart_impropers` / `cart_hxltorsions` /
+`dunbrack_rotdev` (entry 5).
+
 - **lk_bridge_uncpl** disagrees with upstream by 0.16 kcal/mol/Å at
   the carbonyl-O atoms of sp2 backbone acceptors on 1ubq (GLN-1,
   GLN-61). jtmol's gradient matches central finite-difference of
