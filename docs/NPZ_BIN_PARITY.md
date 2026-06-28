@@ -5,7 +5,7 @@ One-time sanity check flagged in
 `.npz` scoring tables carry the same numeric content as upstream's
 torch-pickled `.bin`/`.zip` originals?
 
-**Verdict: yes — every comparable array is bit-equal.**
+**Verdict: yes. Every comparable array is bit-equal.**
 
 | Table | Source | Converted | Fields compared | Result |
 |---|---|---|---|---|
@@ -49,7 +49,7 @@ exact purpose). Full per-field log is written to
 - the `.npz` is regenerated
 
 If the run reports anything other than `OK bit-equal` for every line,
-do not ship — re-run `python scripts/convert_binary_tables.py` from a
+do not ship. Re-run `python scripts/convert_binary_tables.py` from a
 clean torch env and re-verify.
 
 ## Modal-side recipe (if a future host lacks torch)
@@ -80,5 +80,5 @@ if __name__ == "__main__":
         print(run.remote())
 ```
 
-`modal run modal_verify_npz_parity.py` — produces the same per-field log
+`modal run modal_verify_npz_parity.py` produces the same per-field log
 as the local run.

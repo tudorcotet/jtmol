@@ -29,7 +29,7 @@ is wrong.
 0.04 – 0.16 kcal/mol/Å range. jtmol's `jax.grad` matches FD to ~1e-9
 in float64; upstream's autograd does not.
 
-**jtmol workaround.** None — jtmol returns the mathematically correct
+**jtmol workaround.** None. jtmol returns the mathematically correct
 derivative. The parity harness flags these cells as expected
 mismatches in the per-term notes column.
 
@@ -77,7 +77,7 @@ bundled YAML goldens at
 `tmol/tests/data/term_baselines/CartBondedEnergyTerm/test_whole_pose_scoring_10.yaml`.
 Those goldens contain the correct values
 (`term0` = +37.762332916259766, `term1` = +183.56971740722656 on 1ubq),
-which proves the values are computable upstream — the v0.1.22 compiled
+which proves the values are computable upstream; the v0.1.22 compiled
 wheel just no longer emits them via the `render_whole_pose_scoring_module`
 path.
 
@@ -97,7 +97,7 @@ for the 1ubq cells (`1d163b6`), turning 4 of those 10 forward-FAILs
 into honest comparisons against a real upstream number. The other
 6 cells stay flagged as known upstream-wheel limitation.
 
-**jtmol workaround.** None at the implementation level — jtmol's
+**jtmol workaround.** None at the implementation level. jtmol's
 `cart_lengths` and `cart_angles` match the YAML goldens to ≤ 0.004%
 (see [`PARITY.md`](PARITY.md)). The harness uses the YAML golden as
 the reference for 1ubq and reports the other PDBs as "no reference
@@ -166,7 +166,7 @@ skips. Commit
 Before this fix, jtmol returned the "correct" +2.5253 (CYS-params
 applied to CYD); after, it returns +2.1039 (matches upstream's broken
 behaviour). This is one of the few places we replicate an upstream
-bug for parity rather than fix it — flagged as a `# TODO!` in the
+bug for parity rather than fix it. Flagged as a `# TODO!` in the
 upstream source.
 
 ## 5. Compiled cubic-Hermite kink adjoints use float32 internally even with float64 input
@@ -177,7 +177,7 @@ a cubic-Hermite kink (`omega`, `cart_torsions`, `cart_impropers`,
 delivers `max|dg|` floor of ~5e-5 to ~3e-2 against a pure-float64
 reference, regardless of whether the input `coords` tensor is float32
 or float64. Promoting jtmol's coords to float64 makes the diff worse
-on `cart_torsions` (~3.7e-5 → ~3.0e-2 across 4 PDBs) — moving away
+on `cart_torsions` (~3.7e-5 → ~3.0e-2 across 4 PDBs), moving away
 from upstream's precision-limited adjoint rather than toward it.
 
 **Reproducer.** Load 1ubq, score `cart_torsions` only on both jtmol
@@ -201,7 +201,7 @@ default. The parity harness sees the residual as a documented
 "float32-internal-adjoint floor on kink terms" and reports those cells
 as known-mismatch with notes.
 
-**Bigger picture.** This is not a single bug we can patch — it is a
+**Bigger picture.** This is not a single bug we can patch. It is a
 property of upstream's hand-tuned compiled kernels. The right path is
 either (a) a per-term, per-kernel float64 promotion inside upstream's
 C++/CUDA source, or (b) acceptance that upstream's gradients carry
@@ -227,12 +227,12 @@ ASP-35  phi = +14.18°    (synthesized from C-THR26 + N-CA-C-ASP35)
 jtmol's bspline interpolation at these (phi, psi) points returns a
 penalty of `(52.34°)² / (2·8.39°²) = 19.44`. Upstream returns a
 different value, but we cannot get inside the compiled C++ kernel
-locally to see why — the agent's audit (commit `43d9b48`) confirmed
+locally to see why. The audit (commit `43d9b48`) confirmed
 that jtmol's `tmol_jax/numeric/bspline.py` is a line-for-line port of
 `tmol/numeric/bspline_compiled/bspline.hh` (cubic prefilter pole
 `√3 − 2`, normalisation λ, 4-cell periodic wrap), and the
 prefilter-coefficient diff between float32 and float64 is at the
-~1e-7 level — five orders of magnitude too small for 21%.
+~1e-7 level, five orders of magnitude too small for 21%.
 
 So either upstream's compiled bspline diverges from its own header
 source at the synthesized phi/psi points, or upstream applies some
@@ -250,7 +250,7 @@ coefficients at the gap-bridging (phi, psi) points. Doing so requires
 a Modal-side modification to the harness rather than a jtmol-side
 change.
 
-## 7. `gen_torsions` term not yet ported (RESOLVED — ported)
+## 7. `gen_torsions` term not yet ported (RESOLVED: ported)
 
 **Resolved** in `tmol_jax/score/genbonded/` (see
 [`UPSTREAM_ALIGNMENT.md`](UPSTREAM_ALIGNMENT.md#1-gen_torsions-ported)).
@@ -264,7 +264,7 @@ proper torsions with negative-K lift + offset, plus harmonic impropers.
 `genbonded.yaml` `atoms:` hierarchy only defines fall-backs for
 generic ligand chem types (`CS`, `CD`, `Nad`, ...). Canonical protein
 residues are still typed with `Nbb`, `CAbb`, `CObb`, `Hapo`, ... in
-both upstream and jtmol — types absent from the hierarchy → every
+both upstream and jtmol. Types absent from the hierarchy mean every
 torsion is a hash-miss → zero contribution. The term is fully wired
 for any future ligand workflow / YAML extension.
 
@@ -272,7 +272,7 @@ for any future ligand workflow / YAML extension.
 
 When the next parity run surfaces a new upstream-side mismatch:
 
-1. Add a numbered section here following the template above —
+1. Add a numbered section here following the template above:
    summary, reproducer, likely cause, impact in the harness, jtmol
    workaround.
 2. If the bug has a clean stand-alone reproducer, also add it as a

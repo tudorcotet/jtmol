@@ -42,7 +42,7 @@ Upstream PR [#361 "Kdidi/ligand clean"](https://github.com/uw-ipd/tmol/pull/361)
 YAML copied verbatim from upstream to
 `tmol_jax/database/default/scoring/genbonded.yaml`.
 
-**1ubq value: 0.0** — matches upstream's gold
+**1ubq value: 0.0**, matches upstream's gold
 (`tmol/tests/score/test_score_function.py::test_score_function_all_score_types`
 asserts `ScoreType.gen_torsions: n([0.0])` on `ubq_pdb`).
 
@@ -50,7 +50,7 @@ Why the value is zero on a pure protein:
 upstream's `genbonded.yaml` `atoms:` section only carries a hierarchy
 for generic ligand chem types (`CS`, `CD`, `Nad`, ...). Canonical
 protein residues remain typed with Rosetta names (`Nbb`, `CAbb`,
-`CObb`, `Hapo`, `CH3`, ...) — types that have no fall-back entry. The
+`CObb`, `Hapo`, `CH3`, ...), types that have no fall-back entry. The
 hierarchy walk yields just `[<self>]`, no torsion entry's atom tuple
 ever matches, every lookup is a hash-miss, every subgraph drops. The
 term is implemented for ligands and any future YAML extension; on the
@@ -63,7 +63,7 @@ protein-only panel it correctly contributes zero just like upstream.
 | `tmol_jax/score/score_types.py` | `ScoreType.gen_torsions = 22` (sentinel bumped to 23) |
 | `tmol_jax/score/__init__.py` | `sfxn.set_weight(ScoreType.gen_torsions, 1.0)` |
 | `tmol_jax/score/score_function.py` | Registry entry routing to `GenBondedEnergyTerm` |
-| `tmol_jax/database/scoring/genbonded.py` | Loader + atom-hierarchy + bond-bin lookup (`find_torsion_params`, `find_improper_params`) — port of upstream's attrs-based file, no cattr |
+| `tmol_jax/database/scoring/genbonded.py` | Loader + atom-hierarchy + bond-bin lookup (`find_torsion_params`, `find_improper_params`); port of upstream's attrs-based file, no cattr |
 | `tmol_jax/database/default/scoring/genbonded.yaml` | Verbatim copy from upstream master |
 | `tmol_jax/score/genbonded/potentials.py` | `gen_proper_E` (bare-cosine 4-period + negative-K lift + offset), `gen_improper_E` (harmonic) |
 | `tmol_jax/score/genbonded/genbonded_energy_term.py` | Setup: per-block-type subgraph enumeration (reuses `cartbonded._find_intra_subgraphs` + a 3-neighbor improper enumeration) and DB resolution with Rosetta `calculate_offset` floor-zeroing; eval: pure-JAX gather + reduce |
@@ -73,7 +73,7 @@ protein-only panel it correctly contributes zero just like upstream.
 - Default `bond_type = SINGLE`, `is_ring = False` (btidx 1) for every
   central bond. jtmol's chemical DB does not currently carry per-bond
   order or ring metadata. 239/263 upstream torsion entries use the `~`
-  wildcard bond so this is fine in practice — only a handful of `:`
+  wildcard bond so this is fine in practice; only a handful of `:`
   (aromatic), `@` (any-ring), `=`, `#` entries would gain accuracy
   from real ring detection. Upgrade path: extend `Atom`/bond schema +
   thread `bond_type_int` / `is_ring` through `_subgraphs_for_block_type`.
@@ -106,7 +106,7 @@ torch binary tables (`scripts/convert_binary_tables.py`); they drop the
 torch runtime dep but carry the same numeric content. One-time sanity
 check on the `.npz` ↔ `.bin` conversion is the only follow-up.
 
-### 3. Cutoff constants — values match, refactor diff only
+### 3. Cutoff constants: values match, refactor diff only
 
 Upstream commit [`1d7e18c`](https://github.com/uw-ipd/tmol/commit/1d7e18c)
 ("Aleaverfay/dlin2") bumped `max_dis` from `5.5` to `6.0` Å in
@@ -131,9 +131,9 @@ discoverable.
 
 | File | Upstream change since clone | jtmol impact |
 |------|----------------------------|--------------|
-| `database/scoring/cartbonded.py` | Drop `cattr`, drop `pandas`, type-annotation hygiene | None — same YAML schema |
+| `database/scoring/cartbonded.py` | Drop `cattr`, drop `pandas`, type-annotation hygiene | None (same YAML schema) |
 | `database/scoring/dunbrack_libraries.py` | Prefer `.npz` over `.bin` for torch-optional loading | jtmol uses the same `.npz`-preferred path |
-| `database/scoring/elec.py` | Rename `GlobalParams` → `ElecGlobalParams` | None — namespace hygiene |
+| `database/scoring/elec.py` | Rename `GlobalParams` → `ElecGlobalParams` | None (namespace hygiene) |
 | `database/scoring/hbond.py` | Drop pandas DataFrame mapper, expose plain dicts | jtmol uses the plain-dict path |
 | `database/scoring/ljlk.py` | Drop `cattr`, parse `Angle` units via shared hook | None |
 | `database/scoring/omega_bbdep.py` | `.npz`-preferred | aligned |
