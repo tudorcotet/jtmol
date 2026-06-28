@@ -254,6 +254,9 @@ class LJLKEnergyTerm(EnergyTerm):
         self,
         param_db: Any = None,
         use_neighbor_list: bool = False,
+        # ponytail: matches LJLKGlobalParams.max_dis (= 6.0) post-upstream
+        # commit 1d7e18c. Read from db.global_params.max_dis if jtmol ever
+        # needs to track a non-default cutoff.
         neighbor_list_cutoff: float = 6.0,
     ) -> None:
         # The base EnergyTerm stores ``param_db`` for us; we also

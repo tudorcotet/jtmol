@@ -250,6 +250,39 @@ coefficients at the gap-bridging (phi, psi) points. Doing so requires
 a Modal-side modification to the harness rather than a jtmol-side
 change.
 
+## 7. `gen_torsions` term not yet ported (divergence, not a bug)
+
+**Summary.** Upstream PR
+[#361 "Kdidi/ligand clean"](https://github.com/uw-ipd/tmol/pull/361)
+(merged 2026-06-26) added a new `gen_torsions` score channel to
+`beta2016.sfxn` with weight 1.0. The term scores proper and improper
+dihedrals using generic atom-type parameters (rather than per-residue
+atom-name parameters used by the existing `cart_torsions` and
+`cart_impropers`). It was motivated by ligand support but fires on
+protein backbone + sidechain torsions too.
+
+**Impact.** Upstream's `beta_nov2016_cart` total now includes a
+non-zero `gen_torsions` row that jtmol silently omits. On a 1ubq-class
+protein the contribution is roughly cart_torsions-scale (tens of
+kcal/mol). No bundled YAML golden ships yet at
+`tmol/tests/data/term_baselines/GenBondedEnergyTerm/`, so the parity
+harness cannot diff this row — but upstream's score-by-term will list
+one extra channel that jtmol's score-by-term will not.
+
+**This is not an upstream bug** — it is a real new term we have not
+ported. Documented here so the divergence has a single home alongside
+the other parity-affecting issues. Full port surface and decision
+criteria in [`UPSTREAM_ALIGNMENT.md`](UPSTREAM_ALIGNMENT.md#1-gen_torsions-not-yet-ported).
+
+**Workaround.** None. jtmol's `beta2016_score_function` returns a
+sum that is lower than upstream's by `gen_torsions`. For consumers
+who only use jtmol for design-loop gradients (mosaic affinity loss,
+physics-regularized hallucination), the missing term is a fixed-scale
+offset that does not affect the gradient direction on any sequence-
+or coord-perturbation comparison done with jtmol-vs-jtmol. For
+consumers who need bit-exact agreement with upstream's total, port
+the term.
+
 ## How to add a new upstream-bug entry
 
 When the next parity run surfaces a new upstream-side mismatch:

@@ -108,6 +108,9 @@ class LKBallDefaults(NamedTuple):
 
     # Upper heavy-atom distance cutoff, Å (upstream:
     # ``LJLKGlobalParams.max_dis`` / ``LKBallGlobalParams.distance_threshold``).
+    # ponytail: upstream commit 1d7e18c now threads this from
+    # ``max_dis`` end-to-end. jtmol keeps the literal; thread from
+    # LKBallGlobalParams if jtmol ever needs a non-default cutoff.
     distance_threshold: float = 6.0
 
     # LJ sigma fallbacks (used when we need a default sigma for f_desolv's

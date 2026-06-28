@@ -41,6 +41,9 @@ from tmol_jax.score.common import connectivity_weight, interpolate, interpolate_
 
 # Far cutoff of the LJ / LK fade polynomial. Both forms zero out above
 # this distance.
+# ponytail: upstream commit 1d7e18c parameterizes this as `max_dis`
+# (read from LJLKGlobalParams.max_dis = 6.0). jtmol keeps the literal;
+# thread from global params if jtmol ever needs a non-default cutoff.
 _CPOLY_DMAX: float = 6.0
 
 # Lower edge of the far cpoly fade, used when ``sigma <= 4.5``.
