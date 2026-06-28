@@ -54,9 +54,6 @@ when you need the rest, load the full 167-type NPZ.
 
 from __future__ import annotations
 
-import os
-from typing import Optional
-
 import jax
 import jax.numpy as jnp
 import numpy as np

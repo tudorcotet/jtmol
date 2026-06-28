@@ -27,7 +27,6 @@ instances -- any pytree with these fields works (the term calls
 
 from __future__ import annotations
 
-import math
 from typing import Any, Tuple
 
 import jax

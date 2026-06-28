@@ -36,10 +36,8 @@ a downstream scoring pass needs given a PoseStack + its PackedBlockTypes
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Tuple
 
-import attrs
 import jax.numpy as jnp
 import numpy as np
 

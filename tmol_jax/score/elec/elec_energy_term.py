@@ -48,7 +48,6 @@ from tmol_jax.score.common.count_pair import (
     connectivity_weight,  # noqa: F401
     pair_bonded_path_length_direct,
     pose_atom_real_mask,
-    scatter_per_atom,
 )
 from tmol_jax.score.elec.params import (
     ElecGlobalParams,

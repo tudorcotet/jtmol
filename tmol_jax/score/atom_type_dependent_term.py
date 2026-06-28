@@ -36,7 +36,7 @@ This is a base class for LJ/LK, hbond, elec energy terms.
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional
 
 import attrs
 import jax.numpy as jnp

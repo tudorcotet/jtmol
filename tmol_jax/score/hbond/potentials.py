@@ -26,7 +26,6 @@ from tmol_jax.score.common import (
 from tmol_jax.score.hbond.params import (
     HYBRIDIZATION_RING,
     HYBRIDIZATION_SP2,
-    HYBRIDIZATION_SP3,
 )
 
 

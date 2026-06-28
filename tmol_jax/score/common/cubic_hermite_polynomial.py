@@ -12,8 +12,6 @@ and evaluates the standard cubic Hermite form.
 
 from __future__ import annotations
 
-import jax.numpy as jnp
-
 from tmol_jax.types import Array
 
 

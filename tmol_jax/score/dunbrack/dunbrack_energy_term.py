@@ -68,11 +68,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tmol_jax.numeric.bspline import bspline_coefficients, bspline_interpolate
+from tmol_jax.numeric.bspline import bspline_coefficients
 from tmol_jax.score.common.geom import dihedral_angle
 from tmol_jax.score.dunbrack.potentials import (
     _bicubic_bspline_interpolate,
-    _bilinear_interpolate,
     _frac_index,
     bspline3_coeffs_for_2d_table,
     dunbrack_rotdev_score,
