@@ -10,14 +10,13 @@ at `1d7e18c` used during jtmol's port). Run on 2026-06-19.
 Forcefield YAML constants       byte-identical
 Cutoff constants                values match, refactor diff only
 Loader-side Python              renamed namespaces, dropped torch dep
-ScoreType / sfxn weights        diverges on 1 new term (gen_torsions)
+ScoreType / sfxn weights        aligned (gen_torsions ported, see #1)
 ChemicalDatabase                aligned for protein-only scope
 ```
 
-One real divergence to track: upstream PR #361 introduced a new
-`gen_torsions` score channel weighted 1.0 in `beta2016.sfxn`. jtmol
-does not implement it. See [#1 below](#1-gen_torsions-not-yet-ported)
-for the port surface.
+`gen_torsions` (upstream PR #361) is now ported; on the protein-only
+1ubq panel it evaluates to 0.0 which matches the upstream gold value.
+See [#1 below](#1-gen_torsions-ported) for the port surface.
 
 ## Audit pipeline
 
@@ -34,55 +33,54 @@ upstream/master @ 230fe74
 
 ## Findings
 
-### 1. `gen_torsions` not yet ported
+### 1. `gen_torsions` ported
 
 Upstream PR [#361 "Kdidi/ligand clean"](https://github.com/uw-ipd/tmol/pull/361)
-(merged 2026-06-26) added a new `gen_torsions` energy term that scores
-proper + improper dihedrals using **generic atom-type parameters**
-(rather than per-residue atom-name parameters used by the existing
-`cart_torsions` / `cart_impropers`). The term is wired into
-`beta2016.sfxn` with weight 1.0, so upstream's `beta_nov2016_cart`
-total now includes a non-zero `gen_torsions` row that jtmol silently
-omits.
+(merged 2026-06-26) added a new `gen_torsions` channel scoring proper
++ improper dihedrals via **generic atom-type parameters**. Ported in
+`tmol_jax/score/genbonded/` and `tmol_jax/database/scoring/genbonded.py`;
+YAML copied verbatim from upstream to
+`tmol_jax/database/default/scoring/genbonded.yaml`.
 
-The term was motivated by ligand support (generic atom typing handles
-non-canonical residues without per-residue parameters), but it fires
-on protein backbone + sidechain torsions too. Status on the 1ubq panel:
-upstream will emit a `gen_torsions` row in its `score_by_term`
-breakdown; jtmol will not — but the upstream YAML golden bundle
-(`tmol/tests/data/term_baselines/`) does not yet ship a
-`GenBondedEnergyTerm/` baseline, so the existing parity harness cannot
-diff this row.
+**1ubq value: 0.0** — matches upstream's gold
+(`tmol/tests/score/test_score_function.py::test_score_function_all_score_types`
+asserts `ScoreType.gen_torsions: n([0.0])` on `ubq_pdb`).
 
-#### Port surface
+Why the value is zero on a pure protein:
+upstream's `genbonded.yaml` `atoms:` section only carries a hierarchy
+for generic ligand chem types (`CS`, `CD`, `Nad`, ...). Canonical
+protein residues remain typed with Rosetta names (`Nbb`, `CAbb`,
+`CObb`, `Hapo`, `CH3`, ...) — types that have no fall-back entry. The
+hierarchy walk yields just `[<self>]`, no torsion entry's atom tuple
+ever matches, every lookup is a hash-miss, every subgraph drops. The
+term is implemented for ligands and any future YAML extension; on the
+protein-only panel it correctly contributes zero just like upstream.
 
-| File | What to do |
-|------|------------|
-| `tmol_jax/score/score_types.py` | Add `gen_torsions` to the `ScoreType` enum |
-| `tmol_jax/score/__init__.py::beta2016_score_function` | `sfxn.set_weight(ScoreType.gen_torsions, 1.0)` |
-| `tmol_jax/database/scoring/genbonded.py` | Port the atom-hierarchy + bond-bin lookup loader from `tmol/database/scoring/genbonded.py` |
-| `tmol_jax/database/default/scoring/genbonded.yaml` | Copy verbatim from upstream |
-| `tmol_jax/score/genbonded/genbonded_energy_term.py` | New JAX implementation: setup_block_type (proper+improper subgraph enumeration + DB resolution + offset table) + inter-block hashtable build via existing `score.common.hash_util` |
-| `tmol_jax/score/genbonded/potentials.py` | JAX kernel: `proper = Σ_n k_n · (1 + cos(n·θ - φ_n)) + offset`, `improper = k · (θ - δ)²` (verify exact form against `tmol/score/genbonded/potentials/potentials.hh`) |
+#### What's in the port
 
-Estimated port effort: ~500 LOC, no new dependencies. The proper-
-torsion energy is the same `(1 + cos(nθ - φ))` form jtmol already
-handles for `cart_torsions`; the diff is the atom-type-keyed parameter
-lookup (jtmol's existing `score.common.hash_util` covers it).
+| File | Role |
+|------|------|
+| `tmol_jax/score/score_types.py` | `ScoreType.gen_torsions = 22` (sentinel bumped to 23) |
+| `tmol_jax/score/__init__.py` | `sfxn.set_weight(ScoreType.gen_torsions, 1.0)` |
+| `tmol_jax/score/score_function.py` | Registry entry routing to `GenBondedEnergyTerm` |
+| `tmol_jax/database/scoring/genbonded.py` | Loader + atom-hierarchy + bond-bin lookup (`find_torsion_params`, `find_improper_params`) — port of upstream's attrs-based file, no cattr |
+| `tmol_jax/database/default/scoring/genbonded.yaml` | Verbatim copy from upstream master |
+| `tmol_jax/score/genbonded/potentials.py` | `gen_proper_E` (bare-cosine 4-period + negative-K lift + offset), `gen_improper_E` (harmonic) |
+| `tmol_jax/score/genbonded/genbonded_energy_term.py` | Setup: per-block-type subgraph enumeration (reuses `cartbonded._find_intra_subgraphs` + a 3-neighbor improper enumeration) and DB resolution with Rosetta `calculate_offset` floor-zeroing; eval: pure-JAX gather + reduce |
 
-The C++/CUDA paths are not needed (jtmol gets gradients from
-`jax.grad`); the ligand-specific bond-type bin variants
-(`AROMATIC`, `DOUBLE`, `TRIPLE`) can be skipped for the protein-only
-panel since proteins use `SINGLE` almost exclusively.
+#### Deliberate simplifications
 
-#### When to do it
-
-Right now would gate any future "we match upstream beta_nov2016
-exactly" claim. Defer if the protein-only scoring drift in the
-~10 kcal/mol range is acceptable for current downstream consumers
-(mosaic affinity loss, design-loop physics regularizer). Re-evaluate
-when upstream ships a YAML golden for the term so the parity harness
-can verify the port.
+- Default `bond_type = SINGLE`, `is_ring = False` (btidx 1) for every
+  central bond. jtmol's chemical DB does not currently carry per-bond
+  order or ring metadata. 239/263 upstream torsion entries use the `~`
+  wildcard bond so this is fine in practice — only a handful of `:`
+  (aromatic), `@` (any-ring), `=`, `#` entries would gain accuracy
+  from real ring detection. Upgrade path: extend `Atom`/bond schema +
+  thread `bond_type_int` / `is_ring` through `_subgraphs_for_block_type`.
+- Inter-residue subgraphs (torsions spanning a peptide bond) not
+  emitted. Same zero-contribution argument applies on proteins; the
+  cartbonded `_inter_residue_subgraphs_for_pair` is the template if a
+  future ligand workflow needs them.
 
 ### 2. Forcefield YAML constants byte-identical
 

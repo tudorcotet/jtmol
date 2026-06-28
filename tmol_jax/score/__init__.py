@@ -82,6 +82,7 @@ def beta2016_score_function(param_db: Optional[object] = None) -> ScoreFunction:
     sfxn.set_weight(ScoreType.dunbrack_rotdev, 0.69)
     sfxn.set_weight(ScoreType.dunbrack_semirot, 0.78)
     sfxn.set_weight(ScoreType.ref, 1.0)
+    sfxn.set_weight(ScoreType.gen_torsions, 1.0)
 
     return sfxn
 

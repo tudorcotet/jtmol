@@ -88,6 +88,8 @@ _TERM_FOR_TYPE: dict[ScoreType, str] = {
     ScoreType.lk_bridge_uncpl: "tmol_jax.score.lk_ball.lk_ball_energy_term:LKBallEnergyTerm",
     # Reference energies
     ScoreType.ref: "tmol_jax.score.ref.ref_energy_term:RefEnergyTerm",
+    # Generic bonded torsions
+    ScoreType.gen_torsions: "tmol_jax.score.genbonded.genbonded_energy_term:GenBondedEnergyTerm",
 }
 
 

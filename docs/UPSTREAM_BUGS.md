@@ -250,38 +250,23 @@ coefficients at the gap-bridging (phi, psi) points. Doing so requires
 a Modal-side modification to the harness rather than a jtmol-side
 change.
 
-## 7. `gen_torsions` term not yet ported (divergence, not a bug)
+## 7. `gen_torsions` term not yet ported (RESOLVED — ported)
 
-**Summary.** Upstream PR
-[#361 "Kdidi/ligand clean"](https://github.com/uw-ipd/tmol/pull/361)
-(merged 2026-06-26) added a new `gen_torsions` score channel to
-`beta2016.sfxn` with weight 1.0. The term scores proper and improper
-dihedrals using generic atom-type parameters (rather than per-residue
-atom-name parameters used by the existing `cart_torsions` and
-`cart_impropers`). It was motivated by ligand support but fires on
-protein backbone + sidechain torsions too.
+**Resolved** in `tmol_jax/score/genbonded/` (see
+[`UPSTREAM_ALIGNMENT.md`](UPSTREAM_ALIGNMENT.md#1-gen_torsions-ported)).
+Ported as a single-channel `GenBondedEnergyTerm` mirroring upstream PR
+[#361](https://github.com/uw-ipd/tmol/pull/361): bare-cosine 4-period
+proper torsions with negative-K lift + offset, plus harmonic impropers.
 
-**Impact.** Upstream's `beta_nov2016_cart` total now includes a
-non-zero `gen_torsions` row that jtmol silently omits. On a 1ubq-class
-protein the contribution is roughly cart_torsions-scale (tens of
-kcal/mol). No bundled YAML golden ships yet at
-`tmol/tests/data/term_baselines/GenBondedEnergyTerm/`, so the parity
-harness cannot diff this row — but upstream's score-by-term will list
-one extra channel that jtmol's score-by-term will not.
-
-**This is not an upstream bug** — it is a real new term we have not
-ported. Documented here so the divergence has a single home alongside
-the other parity-affecting issues. Full port surface and decision
-criteria in [`UPSTREAM_ALIGNMENT.md`](UPSTREAM_ALIGNMENT.md#1-gen_torsions-not-yet-ported).
-
-**Workaround.** None. jtmol's `beta2016_score_function` returns a
-sum that is lower than upstream's by `gen_torsions`. For consumers
-who only use jtmol for design-loop gradients (mosaic affinity loss,
-physics-regularized hallucination), the missing term is a fixed-scale
-offset that does not affect the gradient direction on any sequence-
-or coord-perturbation comparison done with jtmol-vs-jtmol. For
-consumers who need bit-exact agreement with upstream's total, port
-the term.
+**On 1ubq the term evaluates to 0.0**, matching upstream's gold value
+(`ScoreType.gen_torsions: n([0.0])` in
+`tmol/tests/score/test_score_function.py`). Why zero: the upstream
+`genbonded.yaml` `atoms:` hierarchy only defines fall-backs for
+generic ligand chem types (`CS`, `CD`, `Nad`, ...). Canonical protein
+residues are still typed with `Nbb`, `CAbb`, `CObb`, `Hapo`, ... in
+both upstream and jtmol — types absent from the hierarchy → every
+torsion is a hash-miss → zero contribution. The term is fully wired
+for any future ligand workflow / YAML extension.
 
 ## How to add a new upstream-bug entry
 

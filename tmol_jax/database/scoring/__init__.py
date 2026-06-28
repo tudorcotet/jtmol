@@ -32,6 +32,7 @@ import attr
 
 from .cartbonded import CartBondedDatabase
 from .disulfide import DisulfideDatabase
+from .genbonded import GenBondedDatabase
 from .dunbrack_libraries import DunbrackRotamerLibrary
 from .elec import ElecDatabase
 from .hbond import HBondDatabase
@@ -49,6 +50,7 @@ class ScoringDatabase:
     elec: ElecDatabase
     hbond: HBondDatabase
     cartbonded: CartBondedDatabase
+    genbonded: GenBondedDatabase
     ref: RefDatabase
     rama: RamaDatabase
     dunbrack: DunbrackRotamerLibrary
@@ -84,6 +86,9 @@ class ScoringDatabase:
             cartbonded=CartBondedDatabase.from_file(
                 os.path.join(path, "cartbonded.yaml")
             ),
+            genbonded=GenBondedDatabase.from_file(
+                os.path.join(path, "genbonded.yaml")
+            ),
             ref=RefDatabase.from_file(os.path.join(path, "ref.yaml")),
             rama=RamaDatabase.from_file(os.path.join(path, "rama.yaml")),
             dunbrack=DunbrackRotamerLibrary.from_file(
@@ -101,6 +106,7 @@ class ScoringDatabase:
 __all__ = [
     "ScoringDatabase",
     "CartBondedDatabase",
+    "GenBondedDatabase",
     "DisulfideDatabase",
     "DunbrackRotamerLibrary",
     "ElecDatabase",

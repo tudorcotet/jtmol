@@ -72,8 +72,11 @@ class ScoreType(IntEnum):
     # Per-residue reference energies (RefEnergyTerm)
     ref = 21
 
+    # Generic bonded torsions + impropers (GenBondedEnergyTerm)
+    gen_torsions = 22
+
     # Sentinel — keep last. Upstream sizes arrays by this value.
-    n_score_types = 22
+    n_score_types = 23
 
 
 __all__ = ["ScoreType"]
