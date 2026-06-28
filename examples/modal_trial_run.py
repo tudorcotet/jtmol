@@ -259,8 +259,6 @@ def design_one(scheme_name: str, seed: int):
 @app.local_entrypoint()
 def run_trial():
     """Launch the full 30-design trial."""
-    import itertools
-
     jobs = []
     for scheme in TRIAL_SCHEMES:
         for seed in range(DESIGNS_PER_SCHEME):

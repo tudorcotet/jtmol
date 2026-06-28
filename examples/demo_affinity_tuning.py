@@ -32,7 +32,6 @@ import numpy as np
 
 import tmol_jax
 from tmol_jax.score.score_types import ScoreType
-from tmol_jax.score.score_function import ScoreFunction
 from tmol_jax.score import beta2016_score_function
 from examples.integration_mosaic_hallucinator import (
     _ATOM37_NAMES,

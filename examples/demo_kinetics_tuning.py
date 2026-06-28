@@ -31,8 +31,6 @@ from tmol_jax.score.extra.kinetics_tuning import (
     KineticsTuningLoss,
     per_residue_kinetic_gradient_norms,
 )
-from tmol_jax.score.score_function import ScoreFunction
-from tmol_jax.score.score_types import ScoreType
 from tmol_jax.score import beta2016_score_function
 
 

@@ -19,8 +19,7 @@ See the module docstrings in ``rotamer_sampler.py``,
 
 from __future__ import annotations
 
-import math
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Tuple
 
 import attrs
 import jax.numpy as jnp
