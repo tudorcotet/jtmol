@@ -100,20 +100,6 @@ class ConstraintSet:
 # --------------------------------------------------------------------- #
 
 
-# Pick the "constraint" score type if it exists, otherwise fall back to
-# the first constraint-related channel declared in ``ScoreType``. The
-# ``score_types`` module declares ``ScoreType.constraint = 10`` in this
-# port, so the first branch is normally taken; the fallback exists so
-# this module keeps working if upstream renames/deletes the entry.
-_CONSTRAINT_SCORE_TYPE: ScoreType
-if hasattr(ScoreType, "constraint"):
-    _CONSTRAINT_SCORE_TYPE = ScoreType.constraint
-else:  # pragma: no cover - defensive fallback
-    _CONSTRAINT_SCORE_TYPE = next(
-        st for st in ScoreType if "constraint" in st.name.lower()
-    )
-
-
 class ConstraintEnergyTerm(EnergyTerm):
     """Sum-of-coordinate-restraints energy term.
 
@@ -131,7 +117,7 @@ class ConstraintEnergyTerm(EnergyTerm):
     # ---- metadata ------------------------------------------------- #
 
     def score_types_provided(self) -> list[ScoreType]:
-        return [_CONSTRAINT_SCORE_TYPE]
+        return [ScoreType.constraint]
 
     # ---- setup ---------------------------------------------------- #
 
@@ -199,7 +185,7 @@ class ConstraintEnergyTerm(EnergyTerm):
         # correctly, but this keeps the trace tidy).
         if atom_indices.shape[0] == 0:
             return {
-                _CONSTRAINT_SCORE_TYPE: jnp.zeros((n_poses,), dtype=coords.dtype)
+                ScoreType.constraint: jnp.zeros((n_poses,), dtype=coords.dtype)
             }
 
         pose_ind = atom_indices[:, 0]
@@ -224,7 +210,7 @@ class ConstraintEnergyTerm(EnergyTerm):
             penalty, pose_ind, num_segments=n_poses
         ).astype(coords.dtype)
 
-        return {_CONSTRAINT_SCORE_TYPE: per_pose}
+        return {ScoreType.constraint: per_pose}
 
 
 __all__ = ["ConstraintSet", "ConstraintEnergyTerm"]

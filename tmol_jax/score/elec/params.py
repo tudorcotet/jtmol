@@ -30,7 +30,7 @@ scan.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 import jax
 import jax.numpy as jnp

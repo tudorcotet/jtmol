@@ -18,7 +18,6 @@ from typing import Any
 
 import equinox as eqx
 import jax
-import jax.numpy as jnp
 
 
 try:

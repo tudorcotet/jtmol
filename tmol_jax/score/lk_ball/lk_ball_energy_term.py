@@ -82,7 +82,7 @@ from tmol_jax.score.lk_ball.potentials import (
     place_waters_for_polar_atom,
 )
 from tmol_jax.score.score_types import ScoreType
-from tmol_jax.types import as_jnp, pytree_dataclass
+from tmol_jax.types import pytree_dataclass
 
 _HYB_NAME_TO_INT = {
     None: HYBRIDIZATION_NONE,

@@ -64,11 +64,8 @@ the published Rosetta filter run as a final post-hoc QC check
 
 from __future__ import annotations
 
-from typing import List, Tuple
-
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array, Float, Int
 
 from tmol_jax.score.common.geom import _safe_norm

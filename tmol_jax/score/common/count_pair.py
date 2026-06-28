@@ -23,7 +23,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 from tmol_jax.types import Array
 

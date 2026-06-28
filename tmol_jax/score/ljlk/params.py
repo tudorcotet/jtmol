@@ -23,9 +23,8 @@ Loading:
 
 from __future__ import annotations
 
-from typing import Any, Tuple
+from typing import Any
 
-import attrs
 import jax
 import jax.numpy as jnp
 import numpy as np
