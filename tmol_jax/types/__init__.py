@@ -13,8 +13,7 @@ non-array fields become "aux" (static) metadata.
 
 from __future__ import annotations
 
-import dataclasses
-from typing import Any, ClassVar
+from typing import Any
 
 import attrs
 import jax
@@ -64,12 +63,6 @@ def pytree_dataclass(cls):
     return cls
 
 
-def frozen_dict(d: dict) -> tuple:
-    """Convert a dict to a hashable frozen representation for use as
-    pytree aux data."""
-    return tuple(sorted(d.items()))
-
-
 def as_jnp(x, dtype=None):
     """Coerce array-like to a jax.Array."""
     if dtype is None:
@@ -89,7 +82,6 @@ __all__ = [
     "NDArray",
     "is_array",
     "pytree_dataclass",
-    "frozen_dict",
     "as_jnp",
     "as_np",
 ]
