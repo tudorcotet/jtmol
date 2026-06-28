@@ -93,3 +93,4 @@ docs/*.large.csv
 
 # Wheel/egg
 tmol_jax.egg-info/
+docs/_npz_parity_run.log
