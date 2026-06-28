@@ -28,7 +28,6 @@ from typing import (
     Sequence,
     Set,
     Tuple,
-    Union,
 )
 
 import attr
@@ -42,8 +41,6 @@ from tmol_jax.chemical.all_bonds import bonds_and_bond_ranges
 from tmol_jax.chemical.constants import (
     MAX_PATHS_FROM_CONNECTION,
     MAX_SIG_BOND_SEPARATION,
-    one2three as _ONE2THREE,
-    three2one as _THREE2ONE,
 )
 from tmol_jax.chemical.ideal_coords import build_coords_from_icoors
 
@@ -64,29 +61,6 @@ uaid_t = np.dtype(
         ("n_bonds_from_conn", np.int32),
     ]
 )
-
-
-# --------------------------------------------------------------------- #
-# AA code helpers                                                        #
-# --------------------------------------------------------------------- #
-
-
-# Exposed at module level for convenient ``from tmol_jax.chemical.restypes
-# import one2three, three2one`` imports.
-one2three: Dict[str, str] = dict(_ONE2THREE)
-three2one: Dict[str, str] = dict(_THREE2ONE)
-
-
-def one_to_three(one: str) -> Union[str, None]:
-    """Return the three-letter amino acid code given its one-letter code,
-    or ``None`` if not a valid one-letter code."""
-    return one2three.get(one)
-
-
-def three_to_one(three: str) -> Union[str, None]:
-    """Return the one-letter amino acid code given its three-letter code,
-    or ``None`` if not a valid three-letter code."""
-    return three2one.get(three)
 
 
 # --------------------------------------------------------------------- #

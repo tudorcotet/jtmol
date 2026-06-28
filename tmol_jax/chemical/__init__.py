@@ -31,8 +31,6 @@ from tmol_jax.chemical.restypes import (
     ResName3,
     ResidueTypeSet,
     UnresolvedAtomID,
-    one_to_three,
-    three_to_one,
     uaid_t,
 )
 from tmol_jax.chemical.patched_chemdb import (
@@ -47,8 +45,6 @@ __all__ = [
     "MAX_PATHS_FROM_CONNECTION",
     "one2three",
     "three2one",
-    "one_to_three",
-    "three_to_one",
     "canonical_aa_1letter",
     "canonical_aa_3letter",
     # ideal_coords

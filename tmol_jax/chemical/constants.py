@@ -5,7 +5,7 @@ Ported verbatim from ``tmol.chemical.constants``.
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict
 
 
 # MAX_SIG_BOND_SEPARATION: The maximum significant bond separation.
@@ -79,18 +79,6 @@ canonical_aa_3letter: tuple = tuple(one2three.values())
 canonical_aa_1letter: tuple = tuple(one2three.keys())
 
 
-def one_to_three(one: str) -> Optional[str]:
-    """Return the three-letter amino acid code given its one-letter code,
-    or ``None`` if not a valid one-letter code."""
-    return one2three.get(one)
-
-
-def three_to_one(three: str) -> Optional[str]:
-    """Return the one-letter amino acid code given its three-letter code,
-    or ``None`` if not a valid three-letter code."""
-    return three2one.get(three)
-
-
 __all__ = [
     "MAX_SIG_BOND_SEPARATION",
     "MAX_PATHS_FROM_CONNECTION",
@@ -98,6 +86,4 @@ __all__ = [
     "three2one",
     "canonical_aa_3letter",
     "canonical_aa_1letter",
-    "one_to_three",
-    "three_to_one",
 ]
