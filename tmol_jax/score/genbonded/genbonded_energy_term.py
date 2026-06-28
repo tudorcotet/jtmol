@@ -29,14 +29,15 @@ trivial ``[<self>]`` and no DB entry matches — every torsion is a hash
 miss, contributing zero. The term is implemented for ligands and any
 future YAML extension; it costs ~nothing on protein-only inputs.
 
-Inter-residue subgraphs (torsions spanning a peptide bond) are NOT
-emitted here. The upstream GPU kernel walks them via
-``atom_paths_from_conn`` + the hash table; given the protein-only
-zero-contribution property above, porting that machinery is not on the
-critical path. If a future ligand workflow needs it, the cartbonded
-``_inter_residue_subgraphs_for_pair`` helper is the template; the only
-swap is the param-lookup function (atom-type tuple instead of atom-name
-tuple, calling :meth:`GenBondedDatabase.find_torsion_params`).
+Inter-residue **proper torsions** (4-atom subgraphs spanning a peptide
+bond) are emitted alongside the intra-block ones. Enumeration mirrors
+the cartbonded ``_inter_residue_subgraphs_for_pair`` helper: walk
+``atom_paths_from_conn`` on both residues, join ``reversed(path_A) +
+path_B``, keep size-4 tuples. The only swap is the param-lookup function
+-- atom-type tuple via :meth:`GenBondedDatabase.find_torsion_params`
+instead of atom-name tuple. Impropers are intra-residue by definition
+(an improper is rooted at a single atom with exactly three neighbours,
+all on the same residue) so no inter-block impropers are emitted.
 """
 
 from __future__ import annotations
@@ -52,10 +53,12 @@ from tmol_jax.score.energy_term import EnergyTerm
 from tmol_jax.score.score_types import ScoreType
 from tmol_jax.score.genbonded.potentials import gen_improper_E, gen_proper_E
 from tmol_jax.score.cartbonded.cartbonded_energy_term import (
+    _CON_PATH_INDICES,
     _bond_atom_map,
     _find_intra_subgraphs,
     _pad_atoms,
     _pad_params,
+    _path_atoms,
 )
 from tmol_jax.types import pytree_dataclass
 
@@ -114,6 +117,14 @@ class GenBondedTermState:
     improper_atoms: jnp.ndarray  # int32[P, B, I, 4]
     improper_params: jnp.ndarray  # float32[P, B, I, 2]
     improper_mask: jnp.ndarray  # bool[P, B, I]
+
+    # Inter-residue proper torsions spanning a peptide-bond connection.
+    # Shape ``[P, IT, ...]`` -- one entry per pose per cross-block
+    # 4-atom subgraph. Emitted only for ``block_i < block_j`` to avoid
+    # double counting, mirroring cartbonded's inter-block tables.
+    inter_torsion_atoms: jnp.ndarray  # int32[P, IT, 4]
+    inter_torsion_params: jnp.ndarray  # float32[P, IT, 5] (k1,k2,k3,k4,offset)
+    inter_torsion_mask: jnp.ndarray  # bool[P, IT]
 
 
 # --------------------------------------------------------------------------- #
@@ -195,6 +206,76 @@ def _subgraphs_for_block_type(
     return propers_out, impropers_out
 
 
+def _inter_residue_subgraphs_for_pair(
+    rt_A: Any,
+    rt_B: Any,
+    conn_A: int,
+    conn_B: int,
+    gen_db: Any,
+) -> List[
+    Tuple[Tuple[int, ...], Tuple[bool, ...], Tuple[float, float, float, float, float]]
+]:
+    """Enumerate cross-block proper-torsion subgraphs across one connection.
+
+    Mirrors :func:`tmol_jax.score.cartbonded.cartbonded_energy_term._inter_residue_subgraphs_for_pair`
+    but specialized to genbonded: only size-4 (proper torsion) subgraphs,
+    no length / angle / improper variants, and parameters resolved by
+    atom *type* via :meth:`GenBondedDatabase.find_torsion_params` (which
+    already walks the hierarchy + bond-bin multiplicity scoring).
+
+    Returns a list of ``(local_atoms, is_on_B, params)`` triples.
+    ``is_on_B[i]`` is ``True`` if ``local_atoms[i]`` indexes into residue
+    B (else residue A); the caller adds the matching ``block_coord_offset``
+    when materializing to global atom indices.
+
+    Subgraphs without a matching DB entry are dropped (hash-miss).
+    """
+    paths_A = rt_A.atom_paths_from_conn[conn_A]
+    paths_B = rt_B.atom_paths_from_conn[conn_B]
+
+    atom_types_A = [a.atom_type for a in rt_A.atoms]
+    atom_types_B = [a.atom_type for a in rt_B.atoms]
+
+    out: List[
+        Tuple[Tuple[int, ...], Tuple[bool, ...], Tuple[float, float, float, float, float]]
+    ] = []
+    seen: set = set()
+
+    for cat, pa_i, pb_i in _CON_PATH_INDICES:
+        if cat != 2:  # only torsions (cat 0 = length, 1 = angle)
+            continue
+        path_A = _path_atoms(paths_A[pa_i])
+        path_B = _path_atoms(paths_B[pb_i])
+        if not path_A or not path_B:
+            continue
+        rev_A = path_A[::-1]
+        atoms = rev_A + path_B
+        if len(atoms) != 4:
+            continue
+        is_on_B = tuple([False] * len(rev_A) + [True] * len(path_B))
+        key = (atoms, is_on_B)
+        if key in seen:
+            continue
+        seen.add(key)
+        types = tuple(
+            atom_types_B[a] if b else atom_types_A[a]
+            for a, b in zip(atoms, is_on_B)
+        )
+        # ponytail: default bond_type=SINGLE, is_ring=False -- same
+        # rationale as the intra-block enumeration above.
+        entry = gen_db.find_torsion_params(*types)
+        if entry is None:
+            continue
+        off = entry.offset
+        if abs(off) < 1e-6:
+            off = _calculate_offset(entry.k1, entry.k2, entry.k3, entry.k4)
+        out.append(
+            (atoms, is_on_B, (entry.k1, entry.k2, entry.k3, entry.k4, off))
+        )
+
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Energy term                                                                 #
 # --------------------------------------------------------------------------- #
@@ -244,6 +325,33 @@ class GenBondedEnergyTerm(EnergyTerm):
         improper_atoms, improper_mask, _ = _pad_atoms(per_type_improper_atoms, 4)
         improper_params = _pad_params(per_type_improper_params, 2)
 
+        # Inter-residue proper-torsion subgraphs per (bt_A, conn_A, bt_B,
+        # conn_B). Empty pairs are omitted so the per-pose materialization
+        # in ``setup_for_pose_stack`` can short-circuit on a dict miss.
+        inter_torsions_by_pair: Dict[
+            Tuple[int, int, int, int],
+            List[
+                Tuple[
+                    Tuple[int, ...],
+                    Tuple[bool, ...],
+                    Tuple[float, float, float, float, float],
+                ]
+            ],
+        ] = {}
+        for bt_A, rt_A in enumerate(pbt.active_block_types):
+            n_conn_A = len(rt_A.connections)
+            for bt_B, rt_B in enumerate(pbt.active_block_types):
+                n_conn_B = len(rt_B.connections)
+                for conn_A in range(n_conn_A):
+                    for conn_B in range(n_conn_B):
+                        torsions = _inter_residue_subgraphs_for_pair(
+                            rt_A, rt_B, conn_A, conn_B, self.gen_database
+                        )
+                        if torsions:
+                            inter_torsions_by_pair[
+                                (bt_A, conn_A, bt_B, conn_B)
+                            ] = torsions
+
         tables = {
             "torsion_atoms": torsion_atoms,
             "torsion_params": torsion_params,
@@ -251,6 +359,7 @@ class GenBondedEnergyTerm(EnergyTerm):
             "improper_atoms": improper_atoms,
             "improper_params": improper_params,
             "improper_mask": improper_mask,
+            "inter_torsions_by_pair": inter_torsions_by_pair,
         }
         self._bt_cache[key] = tables
         return tables
@@ -300,6 +409,65 @@ class GenBondedEnergyTerm(EnergyTerm):
             tables["improper_mask"],
         )
 
+        # ---------- Inter-residue materialization ------------------- #
+        irc = np.asarray(pose_stack.inter_residue_connections)  # [P, B, C, 2]
+        inter_by_pair = tables["inter_torsions_by_pair"]
+
+        inter_T_atoms_per_pose: List[List[Tuple[int, int, int, int]]] = []
+        inter_T_params_per_pose: List[List[Tuple[float, ...]]] = []
+
+        B = block_type_ind.shape[1]
+        for pose in range(P):
+            T_atoms: List[Tuple[int, int, int, int]] = []
+            T_params: List[Tuple[float, ...]] = []
+            for block_i in range(B):
+                bt_i = int(block_type_ind[pose, block_i])
+                if bt_i < 0:
+                    continue
+                n_conn_i = irc.shape[2]
+                for conn_i in range(n_conn_i):
+                    block_j = int(irc[pose, block_i, conn_i, 0])
+                    conn_j = int(irc[pose, block_i, conn_i, 1])
+                    if block_j < 0 or block_i >= block_j:
+                        continue
+                    bt_j = int(block_type_ind[pose, block_j])
+                    if bt_j < 0:
+                        continue
+                    torsions_hit = inter_by_pair.get((bt_i, conn_i, bt_j, conn_j))
+                    if not torsions_hit:
+                        continue
+                    off_i = int(block_coord_offset[pose, block_i])
+                    off_j = int(block_coord_offset[pose, block_j])
+                    for atoms, is_on_B, params in torsions_hit:
+                        g = tuple(
+                            (a + off_j) if b else (a + off_i)
+                            for a, b in zip(atoms, is_on_B)
+                        )
+                        T_atoms.append(g)
+                        T_params.append(params)
+            inter_T_atoms_per_pose.append(T_atoms)
+            inter_T_params_per_pose.append(T_params)
+
+        max_len = max((len(x) for x in inter_T_atoms_per_pose), default=0)
+        max_len = max(max_len, 1)
+        inter_T_atoms = np.full((P, max_len, 4), -1, dtype=np.int32)
+        inter_T_params = np.zeros((P, max_len, 5), dtype=np.float32)
+        inter_T_mask = np.zeros((P, max_len), dtype=bool)
+        for p, (atoms_l, params_l) in enumerate(
+            zip(inter_T_atoms_per_pose, inter_T_params_per_pose)
+        ):
+            for j, (a, pa) in enumerate(zip(atoms_l, params_l)):
+                inter_T_atoms[p, j, :] = a
+                inter_T_params[p, j, :] = pa
+                inter_T_mask[p, j] = True
+
+        # Phantom-atom screen (same convention as the intra path).
+        if inter_T_atoms.size > 0:
+            safe = np.where(inter_T_atoms >= 0, inter_T_atoms, 0)
+            pose_idx = np.arange(P)[:, None, None]
+            present = atom_present[pose_idx, safe]
+            inter_T_mask = inter_T_mask & np.all(present, axis=-1)
+
         return GenBondedTermState(
             torsion_atoms=jnp.asarray(t_atoms),
             torsion_params=jnp.asarray(t_params),
@@ -307,6 +475,9 @@ class GenBondedEnergyTerm(EnergyTerm):
             improper_atoms=jnp.asarray(i_atoms),
             improper_params=jnp.asarray(i_params),
             improper_mask=jnp.asarray(i_mask),
+            inter_torsion_atoms=jnp.asarray(inter_T_atoms),
+            inter_torsion_params=jnp.asarray(inter_T_params),
+            inter_torsion_mask=jnp.asarray(inter_T_mask),
         )
 
     # --------------------------------------------------------------- #
@@ -352,7 +523,30 @@ class GenBondedEnergyTerm(EnergyTerm):
         i_E = jnp.where(term_state.improper_mask, i_E, 0.0)
         imp_sum = jnp.sum(i_E, axis=(1, 2))  # [P]
 
-        return {ScoreType.gen_torsions: proper_sum + imp_sum}
+        # Inter-residue proper torsions ----------------------------- #
+        ita = term_state.inter_torsion_atoms  # [P, E, 4]
+        inter_sum = jnp.zeros((coords.shape[0],), dtype=proper_sum.dtype)
+        if ita.shape[1] > 0:
+            safe = jnp.where(ita >= 0, ita, 0)
+            P_, E_, k_ = safe.shape
+            flat = safe.reshape(P_, E_ * k_)
+            idx = flat[:, :, None].repeat(3, axis=-1)
+            ixyz = jnp.take_along_axis(coords, idx, axis=1).reshape(
+                P_, E_, k_, 3
+            )
+            it_theta = dihedral_angle(
+                ixyz[..., 0, :], ixyz[..., 1, :],
+                ixyz[..., 2, :], ixyz[..., 3, :],
+            )
+            itp = term_state.inter_torsion_params
+            it_E = gen_proper_E(
+                it_theta,
+                itp[..., 0], itp[..., 1], itp[..., 2], itp[..., 3], itp[..., 4],
+            )
+            it_E = jnp.where(term_state.inter_torsion_mask, it_E, 0.0)
+            inter_sum = jnp.sum(it_E, axis=1)
+
+        return {ScoreType.gen_torsions: proper_sum + imp_sum + inter_sum}
 
 
 __all__ = ["GenBondedEnergyTerm", "GenBondedTermState"]

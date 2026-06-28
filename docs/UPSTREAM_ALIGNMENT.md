@@ -77,10 +77,17 @@ protein-only panel it correctly contributes zero just like upstream.
   (aromatic), `@` (any-ring), `=`, `#` entries would gain accuracy
   from real ring detection. Upgrade path: extend `Atom`/bond schema +
   thread `bond_type_int` / `is_ring` through `_subgraphs_for_block_type`.
-- Inter-residue subgraphs (torsions spanning a peptide bond) not
-  emitted. Same zero-contribution argument applies on proteins; the
-  cartbonded `_inter_residue_subgraphs_for_pair` is the template if a
-  future ligand workflow needs them.
+- Inter-residue proper torsions (4-atom subgraphs spanning a peptide
+  bond) are now emitted via `_inter_residue_subgraphs_for_pair` in
+  `genbonded_energy_term.py`, mirroring the cartbonded helper but with
+  atom-type lookup (`GenBondedDatabase.find_torsion_params`) instead of
+  atom-name lookup. On 1ubq the walker enumerates ~92k candidate
+  cross-block 4-atom tuples (across the full block-type palette) and
+  ~75 actual peptide-bond edges; all currently drop on the
+  protein-atom-type hash miss so `gen_torsions` stays at 0.0 -- same
+  zero-contribution argument as the intra-block case. Inter-block
+  impropers are not emitted because an improper is intrinsically rooted
+  at a single 3-neighbour center on one residue.
 
 ### 2. Forcefield YAML constants byte-identical
 
