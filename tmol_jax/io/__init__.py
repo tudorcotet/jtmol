@@ -2,8 +2,7 @@
 
 Pure-Python / numpy port of ``tmol.io``. All public names are exposed
 lazily through ``__getattr__`` so a transient bug in one submodule
-(e.g. while parallel-port agents are still landing code) does not
-prevent ``import tmol_jax.io`` from succeeding.
+does not prevent ``import tmol_jax.io`` from succeeding.
 
 Public names
 ------------
@@ -22,80 +21,29 @@ Public names
 
 from __future__ import annotations
 
-
-_EXPORTS = (
-    # Sibling-agent ports (pdb_parsing.py, canonical_form.py, canonical_ordering.py)
-    "parse_pdb",
-    "pose_stack_from_pdb",
-    "CanonicalOrdering",
-    "default_canonical_ordering",
-    "default_packed_block_types",
-    "canonical_form_from_pdb",
-    # This-agent ports
-    "pose_stack_from_canonical_form",
-    "canonical_form_from_pose_stack",
-    "atom_records_from_pose_stack",
-    "write_pose_stack_pdb",
-    "deduce_chains",
-)
+import importlib
 
 
-def _resolve(name: str):
-    if name == "parse_pdb":
-        from tmol_jax.io.pdb_parsing import parse_pdb
-
-        return parse_pdb
-    if name == "pose_stack_from_pdb":
-        from tmol_jax.io.pdb_parsing import pose_stack_from_pdb
-
-        return pose_stack_from_pdb
-    if name == "CanonicalOrdering":
-        from tmol_jax.io.canonical_ordering import CanonicalOrdering
-
-        return CanonicalOrdering
-    if name == "default_canonical_ordering":
-        from tmol_jax.io.canonical_ordering import default_canonical_ordering
-
-        return default_canonical_ordering
-    if name == "default_packed_block_types":
-        from tmol_jax.io.canonical_ordering import default_packed_block_types
-
-        return default_packed_block_types
-    if name == "canonical_form_from_pdb":
-        from tmol_jax.io.canonical_form import canonical_form_from_pdb
-
-        return canonical_form_from_pdb
-    if name == "pose_stack_from_canonical_form":
-        from tmol_jax.io.pose_stack_construction import (
-            pose_stack_from_canonical_form,
-        )
-
-        return pose_stack_from_canonical_form
-    if name == "canonical_form_from_pose_stack":
-        from tmol_jax.io.pose_stack_deconstruction import (
-            canonical_form_from_pose_stack,
-        )
-
-        return canonical_form_from_pose_stack
-    if name == "atom_records_from_pose_stack":
-        from tmol_jax.io.write_pose_stack_pdb import atom_records_from_pose_stack
-
-        return atom_records_from_pose_stack
-    if name == "write_pose_stack_pdb":
-        from tmol_jax.io.write_pose_stack_pdb import write_pose_stack_pdb
-
-        return write_pose_stack_pdb
-    if name == "deduce_chains":
-        from tmol_jax.io.chain_deduction import deduce_chains
-
-        return deduce_chains
-    raise AttributeError(f"module 'tmol_jax.io' has no attribute {name!r}")
+_EXPORTS = {
+    "parse_pdb": "tmol_jax.io.pdb_parsing",
+    "pose_stack_from_pdb": "tmol_jax.io.pdb_parsing",
+    "CanonicalOrdering": "tmol_jax.io.canonical_ordering",
+    "default_canonical_ordering": "tmol_jax.io.canonical_ordering",
+    "default_packed_block_types": "tmol_jax.io.canonical_ordering",
+    "canonical_form_from_pdb": "tmol_jax.io.canonical_form",
+    "pose_stack_from_canonical_form": "tmol_jax.io.pose_stack_construction",
+    "canonical_form_from_pose_stack": "tmol_jax.io.pose_stack_deconstruction",
+    "atom_records_from_pose_stack": "tmol_jax.io.write_pose_stack_pdb",
+    "write_pose_stack_pdb": "tmol_jax.io.write_pose_stack_pdb",
+    "deduce_chains": "tmol_jax.io.chain_deduction",
+}
 
 
 def __getattr__(name):
-    if name in _EXPORTS:
-        return _resolve(name)
-    raise AttributeError(f"module 'tmol_jax.io' has no attribute {name!r}")
+    module_path = _EXPORTS.get(name)
+    if module_path is None:
+        raise AttributeError(f"module 'tmol_jax.io' has no attribute {name!r}")
+    return getattr(importlib.import_module(module_path), name)
 
 
 # Names that would otherwise collide with submodule names -- bind them

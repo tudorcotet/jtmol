@@ -31,7 +31,7 @@ db. The two most common entry points are:
 from __future__ import annotations
 
 import os
-from typing import ClassVar, List, Optional
+from typing import ClassVar, Optional
 
 import attr
 
@@ -108,57 +108,9 @@ class ParameterDatabase:
 
         return cls(scoring=scoring, chemical=patched_chemdb)
 
-    # ------------------------------------------------------------------ #
-    # Subsetting                                                          #
-    # ------------------------------------------------------------------ #
-
-    def create_stable_subset(
-        self,
-        desired_names: List[str],
-        desired_variants: List[str],
-    ) -> "ParameterDatabase":
-        """Build a new :class:`ParameterDatabase` whose chemical db only
-        contains the requested residue types and variants.
-
-        Upstream reference: :meth:`tmol.database.ParameterDatabase.create_stable_subset`.
-
-        The upstream implementation iterates ``desired_names`` in order,
-        looks up each base residue in the source PCD, sorts variants by
-        name for determinism, and runs the base residues back through
-        :meth:`PatchedChemicalDatabase.from_chem_db` to re-apply the
-        variants.
-
-        The JAX port of :meth:`PatchedChemicalDatabase.from_chem_db`
-        currently does **not** implement variant patching (see the
-        docstring on :mod:`tmol_jax.chemical.patched_chemdb`). Rather
-        than silently emit a subset that ignores variants, we raise
-        :class:`NotImplementedError` so callers fail fast. Most users
-        only need :meth:`get_default`; anyone who lands here should
-        port the ``do_patch`` pipeline first.
-
-        Parameters
-        ----------
-        desired_names
-            Base residue type names (``RawResidueType.name``) to
-            include.
-        desired_variants
-            :attr:`VariantType.display_name` values to carry through.
-        """
-        raise NotImplementedError(
-            "ParameterDatabase.create_stable_subset is not yet implemented in "
-            "tmol_jax. It depends on the variant-patching pipeline in "
-            "tmol_jax.chemical.patched_chemdb, which is currently a "
-            "pass-through that does not apply variant patches. Port the "
-            "upstream `do_patch` / `RestypeGraphBuilder` machinery (or ship "
-            "pre-patched residue types as data files) before using this "
-            "method. Most use cases should rely on ParameterDatabase."
-            "get_default() instead."
-        )
-
 
 __all__ = [
     "ParameterDatabase",
     "ChemicalDatabase",
     "ScoringDatabase",
-    "PatchedChemicalDatabase",
 ]
