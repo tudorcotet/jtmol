@@ -184,8 +184,6 @@ def lbfgs_minimize(
     rho_history = jnp.zeros((history,), dtype=dtype)
     hist_count = 0
 
-    f_prev = f_val
-
     n_iter = 0
     converged = False
     status = "max_iter"
