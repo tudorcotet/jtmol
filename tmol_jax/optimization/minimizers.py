@@ -39,9 +39,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
-import jax
 import jax.numpy as jnp
-import numpy as np
 
 from tmol_jax.optimization.lbfgs import lbfgs_minimize
 

@@ -83,36 +83,9 @@ DEFAULT_RAMP_SCHEDULE: tuple[float, ...] = (0.02, 0.25, 0.55, 1.0)
 MinFn = Callable[[PoseStack, ScoreFunction], PoseStack]
 
 
-# ---------------------------------------------------------------------- #
-# Default minimization / packing hooks.                                  #
-#                                                                        #
-# Imported lazily so this module remains importable even while its       #
-# sibling packages (``optimization.minimizers``, ``pack.packer``) are    #
-# still being ported. Callers that want non-default behavior can pass    #
-# their own ``min_fn`` / ``pack_fn``.                                    #
-# ---------------------------------------------------------------------- #
-
-
-def _default_min_fn(pose_stack: PoseStack, sfxn: ScoreFunction) -> PoseStack:
-    """Default minimizer: shared Cartesian LBFGS from the optimization layer."""
-    from tmol_jax.optimization.minimizers import run_min  # local import
-
-    return run_min(pose_stack, sfxn)
-
-
-def _default_pack_fn(pose_stack: PoseStack, sfxn: ScoreFunction) -> PoseStack:
-    """Default packer: shared rotamer packer from the pack layer.
-
-    The JAX packer takes ``(pose_stack, sfxn)`` and returns a repacked
-    :class:`~tmol_jax.pose.pose_stack.PoseStack`. It internally builds
-    its own :class:`PackerTask` with sensible defaults (restrict to
-    repacking, include current rotamer, Dunbrack + FixedAA samplers).
-    Override ``pack_fn`` in :func:`fast_relax` if you need custom task
-    ops or a different sampler palette.
-    """
-    from tmol_jax.pack.packer import pack_rotamers  # local import
-
-    return pack_rotamers(pose_stack, sfxn)
+# Default min / pack hooks are resolved lazily inside the entry points so
+# the sibling packages (``optimization.minimizers``, ``pack.packer``) are
+# only imported when actually needed.
 
 
 def _maybe_add_mainchain_constraints(
@@ -290,9 +263,9 @@ def fast_relax(
         )
 
     if pack_fn is None:
-        pack_fn = _default_pack_fn
+        from tmol_jax.pack.packer import pack_rotamers as pack_fn
     if min_fn is None:
-        min_fn = _default_min_fn
+        from tmol_jax.optimization.minimizers import run_min as min_fn
 
     pose_stack = _maybe_add_mainchain_constraints(
         pose_stack, score_function, constrain_relax_to_start, bb_cst_sigma
@@ -377,7 +350,7 @@ def fast_relax_no_pack(
         )
 
     if min_fn is None:
-        min_fn = _default_min_fn
+        from tmol_jax.optimization.minimizers import run_min as min_fn
 
     pose_stack = _maybe_add_mainchain_constraints(
         pose_stack, score_function, constrain_relax_to_start, bb_cst_sigma

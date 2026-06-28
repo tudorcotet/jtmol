@@ -155,11 +155,6 @@ def strong_wolfe_line_search(
     best_f = f0
     best_g = g0
 
-    # Cache the most recent evaluated (f, g) so we can return them after
-    # the zoom phase without redoing work.
-    last_f = f0
-    last_g = g0
-
     def _eval(alpha_t: float):
         y = x + alpha_t * direction
         f_y, g_y = f_and_grad(y)
@@ -172,15 +167,10 @@ def strong_wolfe_line_search(
     bracket_phi_hi = 0.0
     bracket_dphi_lo = 0.0
     bracket_dphi_hi = 0.0
-    bracket_f_lo = f0
-    bracket_g_lo = g0
-    bracket_f_hi = f0
-    bracket_g_hi = g0
 
     for _ in range(max_iter):
         phi_a, f_a, g_a, dphi_a = _eval(alpha)
         evals += 1
-        last_f, last_g = f_a, g_a
 
         # Track the best-seen (lowest f) admissible point.
         if phi_a < best_phi:
@@ -196,10 +186,6 @@ def strong_wolfe_line_search(
             bracket_lo, bracket_hi = alpha_prev, alpha
             bracket_phi_lo, bracket_phi_hi = phi_prev, phi_a
             bracket_dphi_lo, bracket_dphi_hi = dphi_prev, dphi_a
-            bracket_f_lo, bracket_g_lo = last_f, last_g  # not yet eval'd at lo; overwritten below
-            # We don't have (f, g) at alpha_prev cached separately after the first iter; the zoom
-            # phase only consumes phi/dphi at the endpoints, so this is fine.
-            bracket_f_hi, bracket_g_hi = f_a, g_a
             break
 
         # Strong-Wolfe curvature test.
@@ -212,8 +198,6 @@ def strong_wolfe_line_search(
             bracket_lo, bracket_hi = alpha, alpha_prev
             bracket_phi_lo, bracket_phi_hi = phi_a, phi_prev
             bracket_dphi_lo, bracket_dphi_hi = dphi_a, dphi_prev
-            bracket_f_lo, bracket_g_lo = f_a, g_a
-            bracket_f_hi, bracket_g_hi = f_a, g_a
             break
 
         # Otherwise expand the step and try again.
@@ -247,7 +231,6 @@ def strong_wolfe_line_search(
 
         phi_new, f_new, g_new, dphi_new = _eval(alpha_new)
         evals += 1
-        last_f, last_g = f_new, g_new
         if phi_new < best_phi:
             best_phi = phi_new
             best_alpha = alpha_new
@@ -261,8 +244,6 @@ def strong_wolfe_line_search(
             bracket_hi = alpha_new
             bracket_phi_hi = phi_new
             bracket_dphi_hi = dphi_new
-            bracket_f_hi = f_new
-            bracket_g_hi = g_new
         else:
             if abs(dphi_new) <= -c2 * dphi0:
                 return alpha_new, f_new, g_new
@@ -272,13 +253,9 @@ def strong_wolfe_line_search(
                 bracket_hi = bracket_lo
                 bracket_phi_hi = bracket_phi_lo
                 bracket_dphi_hi = bracket_dphi_lo
-                bracket_f_hi = bracket_f_lo
-                bracket_g_hi = bracket_g_lo
             bracket_lo = alpha_new
             bracket_phi_lo = phi_new
             bracket_dphi_lo = dphi_new
-            bracket_f_lo = f_new
-            bracket_g_lo = g_new
 
     # Exhausted budget or bracket collapsed — fall back to best-seen.
     if best_alpha > 0.0:

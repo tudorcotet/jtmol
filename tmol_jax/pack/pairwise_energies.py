@@ -35,12 +35,9 @@ can use them under ``jit`` if desired.
 
 from __future__ import annotations
 
-import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import attrs
-import jax
-import jax.numpy as jnp
 import numpy as np
 
 

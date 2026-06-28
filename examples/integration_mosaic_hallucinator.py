@@ -315,7 +315,6 @@ def build_pose_stack_template(
     import tmol_jax
     from tmol_jax.pose.packed_block_types import PackedBlockTypes
     from tmol_jax.pose.pose_stack_builder import PoseStackBuilder
-    from tmol_jax.chemical.patched_chemdb import default_patched_chemdb
 
     one2three = {
         "A": "ALA", "R": "ARG", "N": "ASN", "D": "ASP", "C": "CYS",

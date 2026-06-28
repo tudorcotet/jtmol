@@ -175,20 +175,14 @@ def lbfgs_minimize(
             gy = gy * mask
         return fy, gy
 
-    # Initial evaluation.
+    # Initial evaluation. ``f_and_grad`` masks the gradient internally.
     f_val, grad = f_and_grad(x)
-    if mask is not None:
-        # grad is already masked inside f_and_grad, but ensure consistency.
-        grad = grad * mask
 
     # Ring-buffer storage for history.
     s_history = jnp.zeros((history, n), dtype=dtype)
     y_history = jnp.zeros((history, n), dtype=dtype)
     rho_history = jnp.zeros((history,), dtype=dtype)
     hist_count = 0
-
-    f_prev = f_val
-    grad_prev = grad
 
     n_iter = 0
     converged = False
@@ -306,7 +300,6 @@ def lbfgs_minimize(
         # Slide state forward.
         x = x_new
         f_prev = f_val
-        grad_prev = grad
         f_val = f_new
         grad = g_new
 

@@ -25,9 +25,8 @@ H1 figure.
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Dict, Optional
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -95,7 +94,6 @@ SCHEMES: Dict[str, Optional[Dict[str, float]]] = {
 def make_interface_loss(ps, term_weights):
     import tmol_jax
     from tmol_jax.score.score_types import ScoreType
-    from tmol_jax.score.score_function import ScoreFunction
 
     sfxn = tmol_jax.beta2016_score_function()
     if term_weights is not None:

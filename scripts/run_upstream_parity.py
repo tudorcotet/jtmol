@@ -60,8 +60,6 @@ import jax  # noqa: E402
 # (verified ~1e-9 vs upstream in float64).
 jax.config.update("jax_enable_x64", True)
 
-import jax.numpy as jnp  # noqa: E402
-
 
 # --------------------------------------------------------------------- #
 # Harness configuration                                                  #
