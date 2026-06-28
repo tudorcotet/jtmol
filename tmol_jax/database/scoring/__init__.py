@@ -57,11 +57,6 @@ class ScoringDatabase:
     disulfide: DisulfideDatabase
     omega_bbdep: OmegaBBDepDatabase
 
-    # Legacy alias for the upstream ``dun`` attribute name.
-    @property
-    def dun(self) -> DunbrackRotamerLibrary:
-        return self.dunbrack
-
     @classmethod
     def from_file(cls, path: Optional[str] = None) -> "ScoringDatabase":
         """Load every scoring sub-database from ``<path>/*.yaml``.
