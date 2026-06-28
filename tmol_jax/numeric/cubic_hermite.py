@@ -13,8 +13,6 @@ differentiable by :func:`jax.grad` / :func:`jax.jacfwd`.
 
 from __future__ import annotations
 
-import jax.numpy as jnp
-
 
 def interpolate_t(t, p0, dp0, p1, dp1):
     """Cubic interpolation of ``p`` on ``t in [0, 1]``."""
@@ -94,6 +92,3 @@ __all__ = [
     "interpolate_to_zero",
     "interpolate_to_zero_dx",
 ]
-
-# Silence unused-import warnings from bare-re-exports without jnp usage.
-_ = jnp
