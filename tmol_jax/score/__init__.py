@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from tmol_jax.score.batched import batched_energy, batched_value_and_grad
 from tmol_jax.score.energy_term import EnergyTerm
 from tmol_jax.score.score_function import ScoreFunction, ScoreFunctionState
 from tmol_jax.score.score_types import ScoreType
@@ -93,4 +94,6 @@ __all__ = [
     "ScoreType",
     "EnergyTerm",
     "beta2016_score_function",
+    "batched_energy",
+    "batched_value_and_grad",
 ]
