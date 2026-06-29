@@ -1055,13 +1055,13 @@ class CartBondedEnergyTerm(EnergyTerm):
             for cat, _, _, _ in _INTER_CATS
         }
 
+        n_conn = irc.shape[2]
         for pose in range(P):
             for block_i in range(B):
                 bt_i = int(block_type_ind[pose, block_i])
                 if bt_i < 0:
                     continue
-                n_conn_i = irc.shape[2]
-                for conn_i in range(n_conn_i):
+                for conn_i in range(n_conn):
                     block_j = int(irc[pose, block_i, conn_i, 0])
                     conn_j = int(irc[pose, block_i, conn_i, 1])
                     if block_j < 0 or block_i >= block_j:
