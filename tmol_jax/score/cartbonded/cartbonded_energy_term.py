@@ -338,6 +338,25 @@ def _reverse(key: Tuple[str, ...]) -> Tuple[str, ...]:
     return tuple(reversed(key))
 
 
+def _cos3_vals(p: Any) -> Tuple[float, ...]:
+    """6-wide sum-of-three-cosines param vector for torsion-shaped entries."""
+    return (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
+
+
+def _fill_sym_db(
+    db: Dict[Tuple[str, ...], Any],
+    params_iter: Sequence[Any],
+    key_fn: Any,
+    val_fn: Any,
+) -> None:
+    """Insert ``(key, val)`` and ``(reversed key, val)`` for each param."""
+    for p in params_iter:
+        k = key_fn(p)
+        v = val_fn(p)
+        db[k] = v
+        db[_reverse(k)] = v
+
+
 # --------------------------------------------------------------------------- #
 # Per-block-type subgraph build                                                #
 # --------------------------------------------------------------------------- #
@@ -402,34 +421,16 @@ def _subgraphs_for_block_type(
         if extra is not None:
             sources.append(extra)
 
+    # Impropers share the sum-of-three-cosines form with proper torsions
+    # in upstream ``cbtorsion_V_dV`` (potentials.hh); only the score-type
+    # bucket differs.
+    _xK = lambda p: (p.x0, p.K)
     for res in sources:
-        for p in res.length_parameters:
-            k = _length_key(p)
-            length_db[k] = (p.x0, p.K)
-            length_db[_reverse(k)] = (p.x0, p.K)
-        for p in res.angle_parameters:
-            k = _angle_key(p)
-            angle_db[k] = (p.x0, p.K)
-            angle_db[_reverse(k)] = (p.x0, p.K)
-        for p in res.torsion_parameters:
-            k = _torsion_key(p)
-            vals = (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
-            torsion_db[k] = vals
-            torsion_db[_reverse(k)] = vals
-        for p in res.improper_parameters:
-            k = _torsion_key(p)
-            # Impropers share the same sum-of-three-cosines form as
-            # proper torsions in upstream tmol (see cbtorsion_V_dV in
-            # potentials.hh — the ``score_type`` only routes the result
-            # into the improper bucket, the math is identical).
-            imp_params = (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
-            improper_db[k] = imp_params
-            improper_db[_reverse(k)] = imp_params
-        for p in res.hxltorsion_parameters:
-            k = _torsion_key(p)
-            vals = (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
-            hxl_db[k] = vals
-            hxl_db[_reverse(k)] = vals
+        _fill_sym_db(length_db, res.length_parameters, _length_key, _xK)
+        _fill_sym_db(angle_db, res.angle_parameters, _angle_key, _xK)
+        _fill_sym_db(torsion_db, res.torsion_parameters, _torsion_key, _cos3_vals)
+        _fill_sym_db(improper_db, res.improper_parameters, _torsion_key, _cos3_vals)
+        _fill_sym_db(hxl_db, res.hxltorsion_parameters, _torsion_key, _cos3_vals)
 
     atom_name = [a.name for a in rt.atoms]
 
@@ -557,19 +558,10 @@ def _build_cart_lat_dbs(
     tdb: Dict[Tuple[str, ...], Tuple[float, ...]] = {}
     if res is None:
         return ldb, adb, tdb
-    for p in res.length_parameters:
-        k = _length_key(p)
-        ldb[k] = (p.x0, p.K)
-        ldb[_reverse(k)] = (p.x0, p.K)
-    for p in res.angle_parameters:
-        k = _angle_key(p)
-        adb[k] = (p.x0, p.K)
-        adb[_reverse(k)] = (p.x0, p.K)
-    for p in res.torsion_parameters:
-        k = _torsion_key(p)
-        vals = (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
-        tdb[k] = vals
-        tdb[_reverse(k)] = vals
+    _xK = lambda p: (p.x0, p.K)
+    _fill_sym_db(ldb, res.length_parameters, _length_key, _xK)
+    _fill_sym_db(adb, res.angle_parameters, _angle_key, _xK)
+    _fill_sym_db(tdb, res.torsion_parameters, _torsion_key, _cos3_vals)
     return ldb, adb, tdb
 
 
