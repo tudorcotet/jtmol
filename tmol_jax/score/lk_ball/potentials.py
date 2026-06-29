@@ -14,15 +14,11 @@ The upstream code distinguishes donor-water placement (``build_don_water``:
 a water along the D-H axis at a fixed distance) from acceptor-water
 placement (``build_water_for_acc``: a coordinate built with a fixed
 bond-angle and one of several canonical torsions relative to the
-acceptor's hybridization — sp2 / sp3 / ring). For this port we provide a
-single *simplified* :func:`place_waters_for_atom` that averages the
-vectors *from the polar atom to its bonded neighbors* and places waters
-along the opposite (lone-pair-ish) direction. This is not identical to
-upstream's ideal geometry but it preserves the physics contract of
-"waters sit along the polar atom's hydrogen-bonding axis(es) at
-``water_dist``". The main :func:`lk_ball_pair` routine is independent of
-how the waters got placed and is a faithful port of the upstream
-algorithm.
+acceptor's hybridization — sp2 / sp3 / ring). Both are implemented
+here via :func:`place_waters_for_polar_atom`, dispatching on
+``(is_donor, is_acceptor, hybridization)``. The main
+:func:`lk_ball_pair` routine is independent of how the waters got
+placed and is a faithful port of the upstream algorithm.
 
 All functions are pure JAX, shape-polymorphic, and safe to use under
 ``jit``, ``vmap``, and ``grad``. Downstream in
@@ -702,73 +698,6 @@ def place_waters_for_polar_atom(
 
 
 # --------------------------------------------------------------------------- #
-# Legacy simplified placement (kept for backwards compat)                      #
-# --------------------------------------------------------------------------- #
-#
-# The original JAX port's ``place_waters_for_atom`` averaged bond vectors
-# and laid waters on the opposite side. Kept as a reference / escape hatch
-# but no longer used by the energy term.
-
-
-def place_waters_for_atom(
-    coord: Array,
-    neighbor_coords: Array,
-    n_waters: int = 4,
-    water_dist: float = LK_BALL_DEFAULTS.lkb_water_dist,
-    neighbor_mask: Array | None = None,
-) -> Array:
-    """Simplified water placement (legacy; not upstream-faithful).
-
-    Kept so existing call sites do not crash; prefer
-    :func:`place_waters_for_polar_atom` for parity with upstream.
-    """
-
-    coord = jnp.asarray(coord)
-    neighbor_coords = jnp.asarray(neighbor_coords)
-
-    deltas = neighbor_coords - coord  # [k, 3]
-    unit = safe_normalize(deltas, axis=-1)
-
-    if neighbor_mask is not None:
-        mask = jnp.asarray(neighbor_mask, dtype=jnp.float32)[:, None]
-        unit = unit * mask
-        n_valid = jnp.sum(mask)
-    else:
-        n_valid = jnp.asarray(neighbor_coords.shape[0], dtype=jnp.float32)
-
-    mean_u_raw = jnp.sum(unit, axis=0) / jnp.maximum(n_valid, 1.0)  # [3]
-    mean_norm_sq = jnp.sum(mean_u_raw * mean_u_raw)
-    has_dir = mean_norm_sq > 1e-8
-    mean_u_normed = safe_normalize(mean_u_raw, axis=-1)
-    mean_u = jnp.where(has_dir, mean_u_normed, jnp.array([1.0, 0.0, 0.0]))
-
-    axis = -mean_u
-
-    ref = jnp.where(
-        jnp.abs(axis[0]) < 0.9,
-        jnp.array([1.0, 0.0, 0.0]),
-        jnp.array([0.0, 1.0, 0.0]),
-    )
-    e1 = ref - axis * jnp.dot(ref, axis)
-    e1 = safe_normalize(e1, axis=-1)
-    e2 = jnp.cross(axis, e1)
-
-    tilt = jnp.pi / 4.0  # 45°
-    cos_t = jnp.cos(tilt)
-    sin_t = jnp.sin(tilt)
-
-    i = jnp.arange(n_waters, dtype=jnp.float32)
-    phi = 2.0 * jnp.pi * i / jnp.maximum(float(n_waters), 1.0)
-    cos_p = jnp.cos(phi)[:, None]
-    sin_p = jnp.sin(phi)[:, None]
-
-    direction = (
-        cos_t * axis[None, :] + sin_t * (cos_p * e1[None, :] + sin_p * e2[None, :])
-    )
-    return coord[None, :] + water_dist * direction
-
-
-# --------------------------------------------------------------------------- #
 # lk_fraction / lk_bridge_fraction (verbatim ports)                           #
 # --------------------------------------------------------------------------- #
 
@@ -1168,6 +1097,5 @@ __all__ = [
     "lk_isotropic_pair_simplified",
     "place_acceptor_waters",
     "place_donor_waters",
-    "place_waters_for_atom",
     "place_waters_for_polar_atom",
 ]
