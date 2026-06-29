@@ -1024,25 +1024,16 @@ class CartBondedEnergyTerm(EnergyTerm):
 
             return atoms_global, params_pb.astype(np.float32), mask_pb.astype(bool)
 
-        l_atoms, l_params, l_mask = _gather(
-            tables["length_atoms"], tables["length_params"], tables["length_mask"]
-        )
-        a_atoms, a_params, a_mask = _gather(
-            tables["angle_atoms"], tables["angle_params"], tables["angle_mask"]
-        )
-        t_atoms, t_params, t_mask = _gather(
-            tables["torsion_atoms"], tables["torsion_params"], tables["torsion_mask"]
-        )
-        i_atoms, i_params, i_mask = _gather(
-            tables["improper_atoms"],
-            tables["improper_params"],
-            tables["improper_mask"],
-        )
-        h_atoms, h_params, h_mask = _gather(
-            tables["hxltorsion_atoms"],
-            tables["hxltorsion_params"],
-            tables["hxltorsion_mask"],
-        )
+        state_fields: Dict[str, jnp.ndarray] = {}
+        for cat in ("length", "angle", "torsion", "improper", "hxltorsion"):
+            atoms, params, mask = _gather(
+                tables[f"{cat}_atoms"],
+                tables[f"{cat}_params"],
+                tables[f"{cat}_mask"],
+            )
+            state_fields[f"{cat}_atoms"] = jnp.asarray(atoms)
+            state_fields[f"{cat}_params"] = jnp.asarray(params)
+            state_fields[f"{cat}_mask"] = jnp.asarray(mask)
 
         # ---------- Inter-residue materialization ------------------- #
         irc = np.asarray(pose_stack.inter_residue_connections)  # [P, B, C, 2]
@@ -1103,15 +1094,6 @@ class CartBondedEnergyTerm(EnergyTerm):
                             atoms_list[pose].append(g)
                             params_list[pose].append(params)
 
-        # ponytail: reuse module-level _pad_atoms / _pad_params; shape is
-        # [P, max_len, k] either way since P == len(per_pose).
-        inter_L_atoms, inter_L_mask, _ = _pad_atoms(per_pose["L"][0], 2)
-        inter_L_params = _pad_params(per_pose["L"][1], 2)
-        inter_A_atoms, inter_A_mask, _ = _pad_atoms(per_pose["A"][0], 3)
-        inter_A_params = _pad_params(per_pose["A"][1], 2)
-        inter_T_atoms, inter_T_mask, _ = _pad_atoms(per_pose["T"][0], 4)
-        inter_T_params = _pad_params(per_pose["T"][1], 6)
-
         # Mask out inter-residue subgraphs that reference a "phantom"
         # atom (coord exactly zero or non-finite), mirroring the intra-
         # residue ``_gather`` logic. Same BLI / terminus rationale.
@@ -1126,36 +1108,21 @@ class CartBondedEnergyTerm(EnergyTerm):
             all_present = np.all(present, axis=-1)  # [P, E]
             return mask & all_present
 
-        inter_L_mask = _mask_missing(inter_L_atoms, inter_L_mask)
-        inter_A_mask = _mask_missing(inter_A_atoms, inter_A_mask)
-        inter_T_mask = _mask_missing(inter_T_atoms, inter_T_mask)
-
-        return CartBondedTermState(
-            length_atoms=jnp.asarray(l_atoms),
-            length_params=jnp.asarray(l_params),
-            length_mask=jnp.asarray(l_mask),
-            angle_atoms=jnp.asarray(a_atoms),
-            angle_params=jnp.asarray(a_params),
-            angle_mask=jnp.asarray(a_mask),
-            torsion_atoms=jnp.asarray(t_atoms),
-            torsion_params=jnp.asarray(t_params),
-            torsion_mask=jnp.asarray(t_mask),
-            improper_atoms=jnp.asarray(i_atoms),
-            improper_params=jnp.asarray(i_params),
-            improper_mask=jnp.asarray(i_mask),
-            hxltorsion_atoms=jnp.asarray(h_atoms),
-            hxltorsion_params=jnp.asarray(h_params),
-            hxltorsion_mask=jnp.asarray(h_mask),
-            inter_length_atoms=jnp.asarray(inter_L_atoms),
-            inter_length_params=jnp.asarray(inter_L_params),
-            inter_length_mask=jnp.asarray(inter_L_mask),
-            inter_angle_atoms=jnp.asarray(inter_A_atoms),
-            inter_angle_params=jnp.asarray(inter_A_params),
-            inter_angle_mask=jnp.asarray(inter_A_mask),
-            inter_torsion_atoms=jnp.asarray(inter_T_atoms),
-            inter_torsion_params=jnp.asarray(inter_T_params),
-            inter_torsion_mask=jnp.asarray(inter_T_mask),
+        # (cat-key, state-field-prefix, atoms-arity, params-arity).
+        _INTER_OUT = (
+            ("L", "inter_length", 2, 2),
+            ("A", "inter_angle", 3, 2),
+            ("T", "inter_torsion", 4, 6),
         )
+        for cat, prefix, k_atoms, k_params in _INTER_OUT:
+            atoms, mask, _ = _pad_atoms(per_pose[cat][0], k_atoms)
+            params = _pad_params(per_pose[cat][1], k_params)
+            mask = _mask_missing(atoms, mask)
+            state_fields[f"{prefix}_atoms"] = jnp.asarray(atoms)
+            state_fields[f"{prefix}_params"] = jnp.asarray(params)
+            state_fields[f"{prefix}_mask"] = jnp.asarray(mask)
+
+        return CartBondedTermState(**state_fields)
 
     # --------------------------------------------------------------- #
     # Evaluation                                                       #
