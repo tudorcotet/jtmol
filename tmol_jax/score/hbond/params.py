@@ -690,8 +690,6 @@ def _hbond_per_bt_cache(
     n_bonds_pbt = np.asarray(pbt.n_bonds)
 
     n_types = int(pbt.n_types)
-    max_n_atoms = int(pbt.max_n_atoms)
-    active = pbt.active_block_types
 
     # Per-BT donors: just look for polar H -> heavy donor edges via
     # intra-residue bonds.
@@ -1268,7 +1266,6 @@ def hbond_params_for_pose_stack(
     # directly with ``don_start + don_tile_ind`` (i.e. the *correct*
     # donor / acceptor atom indices), so intra-block pairs use the true
     # path length.
-    bsep_intra = MAX_COUNTPAIR_SEPARATION  # default for padding
     max_important_bond_sep = 4  # upstream constant
 
     don_acc_bond_sep = np.full(
