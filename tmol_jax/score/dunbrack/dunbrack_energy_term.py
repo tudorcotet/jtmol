@@ -87,6 +87,19 @@ _MAX_N_CHI = 4
 _N_DIHEDRALS = 2 + _MAX_N_CHI  # phi + psi + chi*
 
 
+def _base3_encode_rotamers(rotamers_1based: np.ndarray) -> np.ndarray:
+    """Encode ``[n, k]`` 1-based rotamer-bin tuples as base-3 ints.
+
+    Upstream's ``rotind2tableind`` layout: most-significant digit first,
+    each chi in ``{1, 2, 3}``. Returns ``[n]`` int32.
+    """
+    k = int(rotamers_1based.shape[1])
+    exponents = np.array(
+        [3 ** (k - 1 - i) for i in range(k)], dtype=np.int32
+    )
+    return np.sum((rotamers_1based - 1) * exponents, axis=1, dtype=np.int32)
+
+
 # --------------------------------------------------------------------------- #
 # Pytree container for the per-pose_stack static state                        #
 # --------------------------------------------------------------------------- #
@@ -512,12 +525,7 @@ class DunbrackEnergyTerm(EnergyTerm):
                 src_rotamers = np.asarray(
                     lib.rotameric_chi_rotamers, dtype=np.int32
                 )
-                n_rotameric_chi = int(src_rotamers.shape[1])
-                exponents = np.array(
-                    [3 ** (n_rotameric_chi - 1 - i) for i in range(n_rotameric_chi)],
-                    dtype=np.int32,
-                )
-                rotinds = np.sum((src_rotamers - 1) * exponents, axis=1)
+                rotinds = _base3_encode_rotamers(src_rotamers)
                 # Upstream picks n_nonrot_sub * bin as the representative
                 # rotameric-table row (first of the discretised-last-chi
                 # sub-rows, which all share the same rotameric means/sigmas).
@@ -527,10 +535,7 @@ class DunbrackEnergyTerm(EnergyTerm):
                 ri2ti[ai, rotinds] = row_ind
             else:
                 rotamers = np.asarray(rd.rotamers, dtype=np.int32)
-                exponents = np.array(
-                    [3 ** (nchi - 1 - i) for i in range(nchi)], dtype=np.int32
-                )
-                rotinds = np.sum((rotamers - 1) * exponents, axis=1)
+                rotinds = _base3_encode_rotamers(rotamers)
                 ri2ti[ai, rotinds] = np.arange(nrot, dtype=np.int32)
                 # Apply rotamer aliases (upstream ``params.py`` ~l.469-485).
                 # PRO is the only canonical AA with aliases: maps certain
@@ -543,14 +548,12 @@ class DunbrackEnergyTerm(EnergyTerm):
                     alias_np = np.asarray(alias, dtype=np.int32)
                     if alias_np.ndim == 2 and alias_np.shape[0] > 0:
                         alias_nchi = alias_np.shape[1] // 2
-                        orig_rotids = alias_np[:, :alias_nchi]
-                        alt_rotids = alias_np[:, alias_nchi:]
-                        alias_exp = np.array(
-                            [3 ** (alias_nchi - 1 - i) for i in range(alias_nchi)],
-                            dtype=np.int32,
+                        orig_inds = _base3_encode_rotamers(
+                            alias_np[:, :alias_nchi]
                         )
-                        orig_inds = np.sum((orig_rotids - 1) * alias_exp, axis=1)
-                        alt_inds = np.sum((alt_rotids - 1) * alias_exp, axis=1)
+                        alt_inds = _base3_encode_rotamers(
+                            alias_np[:, alias_nchi:]
+                        )
                         ri2ti[ai, orig_inds] = ri2ti[ai, alt_inds]
 
             bb_start[ai] = np.asarray(rd.backbone_dihedral_start, dtype=np.float32) * (
@@ -664,12 +667,7 @@ class DunbrackEnergyTerm(EnergyTerm):
             # rotameric-chi bin. We map base-3 rotameric-chi indices into
             # ``[0, nrot_sr)``.
             src_rotamers = np.asarray(lib.rotameric_chi_rotamers, dtype=np.int32)
-            n_rotameric_chi = int(src_rotamers.shape[1])
-            exponents = np.array(
-                [3 ** (n_rotameric_chi - 1 - i) for i in range(n_rotameric_chi)],
-                dtype=np.int32,
-            )
-            rotinds = np.sum((src_rotamers - 1) * exponents, axis=1)
+            rotinds = _base3_encode_rotamers(src_rotamers)
             sr_ri2ti[offset + si, rotinds] = np.arange(nrot_sr, dtype=np.int32)
 
         return sr_table, sr_index, sr_ri2ti, sr_start, sr_step, sr_period
