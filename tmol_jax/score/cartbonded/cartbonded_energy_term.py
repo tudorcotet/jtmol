@@ -338,6 +338,25 @@ def _reverse(key: Tuple[str, ...]) -> Tuple[str, ...]:
     return tuple(reversed(key))
 
 
+def _cos3_vals(p: Any) -> Tuple[float, ...]:
+    """6-wide sum-of-three-cosines param vector for torsion-shaped entries."""
+    return (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
+
+
+def _fill_sym_db(
+    db: Dict[Tuple[str, ...], Any],
+    params_iter: Sequence[Any],
+    key_fn: Any,
+    val_fn: Any,
+) -> None:
+    """Insert ``(key, val)`` and ``(reversed key, val)`` for each param."""
+    for p in params_iter:
+        k = key_fn(p)
+        v = val_fn(p)
+        db[k] = v
+        db[_reverse(k)] = v
+
+
 # --------------------------------------------------------------------------- #
 # Per-block-type subgraph build                                                #
 # --------------------------------------------------------------------------- #
@@ -402,34 +421,16 @@ def _subgraphs_for_block_type(
         if extra is not None:
             sources.append(extra)
 
+    # Impropers share the sum-of-three-cosines form with proper torsions
+    # in upstream ``cbtorsion_V_dV`` (potentials.hh); only the score-type
+    # bucket differs.
+    _xK = lambda p: (p.x0, p.K)
     for res in sources:
-        for p in res.length_parameters:
-            k = _length_key(p)
-            length_db[k] = (p.x0, p.K)
-            length_db[_reverse(k)] = (p.x0, p.K)
-        for p in res.angle_parameters:
-            k = _angle_key(p)
-            angle_db[k] = (p.x0, p.K)
-            angle_db[_reverse(k)] = (p.x0, p.K)
-        for p in res.torsion_parameters:
-            k = _torsion_key(p)
-            vals = (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
-            torsion_db[k] = vals
-            torsion_db[_reverse(k)] = vals
-        for p in res.improper_parameters:
-            k = _torsion_key(p)
-            # Impropers share the same sum-of-three-cosines form as
-            # proper torsions in upstream tmol (see cbtorsion_V_dV in
-            # potentials.hh — the ``score_type`` only routes the result
-            # into the improper bucket, the math is identical).
-            imp_params = (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
-            improper_db[k] = imp_params
-            improper_db[_reverse(k)] = imp_params
-        for p in res.hxltorsion_parameters:
-            k = _torsion_key(p)
-            vals = (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
-            hxl_db[k] = vals
-            hxl_db[_reverse(k)] = vals
+        _fill_sym_db(length_db, res.length_parameters, _length_key, _xK)
+        _fill_sym_db(angle_db, res.angle_parameters, _angle_key, _xK)
+        _fill_sym_db(torsion_db, res.torsion_parameters, _torsion_key, _cos3_vals)
+        _fill_sym_db(improper_db, res.improper_parameters, _torsion_key, _cos3_vals)
+        _fill_sym_db(hxl_db, res.hxltorsion_parameters, _torsion_key, _cos3_vals)
 
     atom_name = [a.name for a in rt.atoms]
 
@@ -539,6 +540,31 @@ def _path_atoms(path: np.ndarray) -> Tuple[int, ...]:
     return tuple(int(a) for a in path if int(a) != -1)
 
 
+def _build_cart_lat_dbs(
+    res: Any,
+) -> Tuple[Dict[Tuple[str, ...], Tuple[float, float]],
+          Dict[Tuple[str, ...], Tuple[float, float]],
+          Dict[Tuple[str, ...], Tuple[float, ...]]]:
+    """Build (length, angle, torsion) name-keyed DB dicts from a residue's
+    cart-bonded params (or ``None``).
+
+    Keys are atom-name tuples; both forward and reversed keys are stored
+    so callers get symmetric lookup. Parameter tuples are ``(x0, K)`` for
+    lengths and angles, and the full 6-wide
+    ``(k1, k2, k3, phi1, phi2, phi3)`` vector for torsions.
+    """
+    ldb: Dict[Tuple[str, ...], Tuple[float, float]] = {}
+    adb: Dict[Tuple[str, ...], Tuple[float, float]] = {}
+    tdb: Dict[Tuple[str, ...], Tuple[float, ...]] = {}
+    if res is None:
+        return ldb, adb, tdb
+    _xK = lambda p: (p.x0, p.K)
+    _fill_sym_db(ldb, res.length_parameters, _length_key, _xK)
+    _fill_sym_db(adb, res.angle_parameters, _angle_key, _xK)
+    _fill_sym_db(tdb, res.torsion_parameters, _torsion_key, _cos3_vals)
+    return ldb, adb, tdb
+
+
 def _build_cart_dbs_for_residue(
     rt: Any, cart_db: Any
 ) -> Tuple[Dict[Tuple[str, ...], Tuple[float, float]],
@@ -546,31 +572,11 @@ def _build_cart_dbs_for_residue(
           Dict[Tuple[str, ...], Tuple[float, ...]]]:
     """Per-residue (length, angle, torsion) name-keyed DB dicts.
 
-    Keys are atom-name tuples; both forward and reversed keys are stored
-    so callers get symmetric lookup. Parameter tuples are
-    ``(x0, K)`` for lengths and angles, and the full
-    ``(k1, k2, k3, phi1, phi2, phi3)`` vector for torsions.
+    Honors the CYD hash-miss replication via :func:`_base_name_for_lookup`.
     """
-    base = _base_name_for_lookup(rt)
-    res = cart_db.residue_params.get(base)
-    ldb: Dict[Tuple[str, ...], Tuple[float, float]] = {}
-    adb: Dict[Tuple[str, ...], Tuple[float, float]] = {}
-    tdb: Dict[Tuple[str, ...], Tuple[float, ...]] = {}
-    if res is not None:
-        for p in res.length_parameters:
-            k = _length_key(p)
-            ldb[k] = (p.x0, p.K)
-            ldb[_reverse(k)] = (p.x0, p.K)
-        for p in res.angle_parameters:
-            k = _angle_key(p)
-            adb[k] = (p.x0, p.K)
-            adb[_reverse(k)] = (p.x0, p.K)
-        for p in res.torsion_parameters:
-            k = _torsion_key(p)
-            vals = (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
-            tdb[k] = vals
-            tdb[_reverse(k)] = vals
-    return ldb, adb, tdb
+    return _build_cart_lat_dbs(
+        cart_db.residue_params.get(_base_name_for_lookup(rt))
+    )
 
 
 def _build_cart_wildcard_dbs(
@@ -579,25 +585,7 @@ def _build_cart_wildcard_dbs(
           Dict[Tuple[str, ...], Tuple[float, float]],
           Dict[Tuple[str, ...], Tuple[float, ...]]]:
     """``wildcard`` DB dicts (same shape as :func:`_build_cart_dbs_for_residue`)."""
-    wild = cart_db.residue_params.get("wildcard")
-    ldb: Dict[Tuple[str, ...], Tuple[float, float]] = {}
-    adb: Dict[Tuple[str, ...], Tuple[float, float]] = {}
-    tdb: Dict[Tuple[str, ...], Tuple[float, ...]] = {}
-    if wild is not None:
-        for p in wild.length_parameters:
-            k = _length_key(p)
-            ldb[k] = (p.x0, p.K)
-            ldb[_reverse(k)] = (p.x0, p.K)
-        for p in wild.angle_parameters:
-            k = _angle_key(p)
-            adb[k] = (p.x0, p.K)
-            adb[_reverse(k)] = (p.x0, p.K)
-        for p in wild.torsion_parameters:
-            k = _torsion_key(p)
-            vals = (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
-            tdb[k] = vals
-            tdb[_reverse(k)] = vals
-    return ldb, adb, tdb
+    return _build_cart_lat_dbs(cart_db.residue_params.get("wildcard"))
 
 
 def _inter_residue_subgraphs_for_pair(
@@ -879,46 +867,33 @@ class CartBondedEnergyTerm(EnergyTerm):
         if cached is not None:
             return cached
 
-        per_type_length_atoms: List[List[Tuple[int, int]]] = []
-        per_type_length_params: List[List[Tuple[float, float]]] = []
-        per_type_angle_atoms: List[List[Tuple[int, int, int]]] = []
-        per_type_angle_params: List[List[Tuple[float, float]]] = []
-        per_type_torsion_atoms: List[List[Tuple[int, int, int, int]]] = []
-        per_type_torsion_params: List[List[Tuple[float, ...]]] = []
-        per_type_improper_atoms: List[List[Tuple[int, int, int, int]]] = []
-        per_type_improper_params: List[List[Tuple[float, ...]]] = []
-        per_type_hxl_atoms: List[List[Tuple[int, int, int, int]]] = []
-        per_type_hxl_params: List[List[Tuple[float, ...]]] = []
-
+        # (output prefix, atoms_arity, params_arity).
+        _CATEGORIES = (
+            ("length", 2, 2),
+            ("angle", 3, 2),
+            ("torsion", 4, 6),
+            ("improper", 4, 6),
+            ("hxltorsion", 4, 6),
+        )
+        per_type: Dict[str, Tuple[List, List]] = {
+            name: ([], []) for name, _, _ in _CATEGORIES
+        }
         for rt in pbt.active_block_types:
-            lengths, angles, torsions, impropers, hxls = _subgraphs_for_block_type(
+            sgs = _subgraphs_for_block_type(
                 rt, self.cart_database, self.improper_roots
             )
-            per_type_length_atoms.append([a for a, _ in lengths])
-            per_type_length_params.append([p for _, p in lengths])
-            per_type_angle_atoms.append([a for a, _ in angles])
-            per_type_angle_params.append([p for _, p in angles])
-            per_type_torsion_atoms.append([a for a, _ in torsions])
-            per_type_torsion_params.append([p for _, p in torsions])
-            per_type_improper_atoms.append([a for a, _ in impropers])
-            per_type_improper_params.append([p for _, p in impropers])
-            per_type_hxl_atoms.append([a for a, _ in hxls])
-            per_type_hxl_params.append([p for _, p in hxls])
+            for (name, _, _), sg in zip(_CATEGORIES, sgs):
+                atoms_l, params_l = per_type[name]
+                atoms_l.append([a for a, _p in sg])
+                params_l.append([p for _a, p in sg])
 
-        length_atoms, length_mask, _ = _pad_atoms(per_type_length_atoms, 2)
-        length_params = _pad_params(per_type_length_params, 2)
-
-        angle_atoms, angle_mask, _ = _pad_atoms(per_type_angle_atoms, 3)
-        angle_params = _pad_params(per_type_angle_params, 2)
-
-        torsion_atoms, torsion_mask, _ = _pad_atoms(per_type_torsion_atoms, 4)
-        torsion_params = _pad_params(per_type_torsion_params, 6)
-
-        improper_atoms, improper_mask, _ = _pad_atoms(per_type_improper_atoms, 4)
-        improper_params = _pad_params(per_type_improper_params, 6)
-
-        hxl_atoms, hxl_mask, _ = _pad_atoms(per_type_hxl_atoms, 4)
-        hxl_params = _pad_params(per_type_hxl_params, 6)
+        intra_tables: Dict[str, np.ndarray] = {}
+        for name, k_atoms, k_params in _CATEGORIES:
+            atoms_l, params_l = per_type[name]
+            a, m, _ = _pad_atoms(atoms_l, k_atoms)
+            intra_tables[f"{name}_atoms"] = a
+            intra_tables[f"{name}_params"] = _pad_params(params_l, k_params)
+            intra_tables[f"{name}_mask"] = m
 
         # --------- Inter-residue subgraph tables -------------------- #
         # We enumerate every ordered (block_type_A, conn_A, block_type_B,
@@ -926,9 +901,6 @@ class CartBondedEnergyTerm(EnergyTerm):
         # list of (local_atoms, is_on_B, params) triples per category
         # (length/angle/torsion). Pairs with no matches still have an
         # empty list so the indexing at runtime is stable.
-        n_types = len(pbt.active_block_types)
-        max_conn = int(np.asarray(pbt.max_n_conn)) if pbt.max_n_conn > 0 else 0
-
         wild_dbs = _build_cart_wildcard_dbs(self.cart_database)
         res_dbs = [
             _build_cart_dbs_for_residue(rt, self.cart_database)
@@ -939,7 +911,6 @@ class CartBondedEnergyTerm(EnergyTerm):
         # Each entry in ``length_*`` is (local_A_atom, local_B_atom, params).
         # Each entry in ``angle_*``  is (tuple of 3 local atoms, is_on_B mask, params).
         # Each entry in ``torsion_*`` is (tuple of 4 local atoms, is_on_B mask, params).
-        pair_shape = (n_types, max(max_conn, 1), n_types, max(max_conn, 1))
         inter_lengths_by_pair: Dict[Tuple[int, int, int, int],
                                     List[Tuple[Tuple[int, ...], Tuple[bool, ...], Tuple[float, ...]]]] = {}
         inter_angles_by_pair: Dict[Tuple[int, int, int, int],
@@ -969,21 +940,7 @@ class CartBondedEnergyTerm(EnergyTerm):
                             inter_torsions_by_pair[pair_key] = torsions
 
         tables = {
-            "length_atoms": length_atoms,
-            "length_params": length_params,
-            "length_mask": length_mask,
-            "angle_atoms": angle_atoms,
-            "angle_params": angle_params,
-            "angle_mask": angle_mask,
-            "torsion_atoms": torsion_atoms,
-            "torsion_params": torsion_params,
-            "torsion_mask": torsion_mask,
-            "improper_atoms": improper_atoms,
-            "improper_params": improper_params,
-            "improper_mask": improper_mask,
-            "hxltorsion_atoms": hxl_atoms,
-            "hxltorsion_params": hxl_params,
-            "hxltorsion_mask": hxl_mask,
+            **intra_tables,
             "inter_lengths_by_pair": inter_lengths_by_pair,
             "inter_angles_by_pair": inter_angles_by_pair,
             "inter_torsions_by_pair": inter_torsions_by_pair,
@@ -1067,25 +1024,16 @@ class CartBondedEnergyTerm(EnergyTerm):
 
             return atoms_global, params_pb.astype(np.float32), mask_pb.astype(bool)
 
-        l_atoms, l_params, l_mask = _gather(
-            tables["length_atoms"], tables["length_params"], tables["length_mask"]
-        )
-        a_atoms, a_params, a_mask = _gather(
-            tables["angle_atoms"], tables["angle_params"], tables["angle_mask"]
-        )
-        t_atoms, t_params, t_mask = _gather(
-            tables["torsion_atoms"], tables["torsion_params"], tables["torsion_mask"]
-        )
-        i_atoms, i_params, i_mask = _gather(
-            tables["improper_atoms"],
-            tables["improper_params"],
-            tables["improper_mask"],
-        )
-        h_atoms, h_params, h_mask = _gather(
-            tables["hxltorsion_atoms"],
-            tables["hxltorsion_params"],
-            tables["hxltorsion_mask"],
-        )
+        state_fields: Dict[str, jnp.ndarray] = {}
+        for cat in ("length", "angle", "torsion", "improper", "hxltorsion"):
+            atoms, params, mask = _gather(
+                tables[f"{cat}_atoms"],
+                tables[f"{cat}_params"],
+                tables[f"{cat}_mask"],
+            )
+            state_fields[f"{cat}_atoms"] = jnp.asarray(atoms)
+            state_fields[f"{cat}_params"] = jnp.asarray(params)
+            state_fields[f"{cat}_mask"] = jnp.asarray(mask)
 
         # ---------- Inter-residue materialization ------------------- #
         irc = np.asarray(pose_stack.inter_residue_connections)  # [P, B, C, 2]
@@ -1096,33 +1044,28 @@ class CartBondedEnergyTerm(EnergyTerm):
         # Walk each pose's connections, resolve partner blocks, emit
         # one packed list per (category) per pose. Only emit entries
         # where ``block_i < block_j`` to avoid double-counting.
-        inter_L_atoms_per_pose: List[List[Tuple[int, int]]] = []
-        inter_L_params_per_pose: List[List[Tuple[float, float]]] = []
-        inter_A_atoms_per_pose: List[List[Tuple[int, int, int]]] = []
-        inter_A_params_per_pose: List[List[Tuple[float, float]]] = []
-        inter_T_atoms_per_pose: List[List[Tuple[int, int, int, int]]] = []
-        inter_T_params_per_pose: List[List[Tuple[float, ...]]] = []
+        # (category-key, by-pair-dict, atoms-arity, params-arity).
+        _INTER_CATS = (
+            ("L", inter_lengths_by_pair, 2, 2),
+            ("A", inter_angles_by_pair, 3, 2),
+            ("T", inter_torsions_by_pair, 4, 6),
+        )
+        per_pose: Dict[str, Tuple[List, List]] = {
+            cat: ([[] for _ in range(P)], [[] for _ in range(P)])
+            for cat, _, _, _ in _INTER_CATS
+        }
 
+        n_conn = irc.shape[2]
         for pose in range(P):
-            L_atoms: List[Tuple[int, int]] = []
-            L_params: List[Tuple[float, float]] = []
-            A_atoms: List[Tuple[int, int, int]] = []
-            A_params: List[Tuple[float, float]] = []
-            T_atoms: List[Tuple[int, int, int, int]] = []
-            T_params: List[Tuple[float, ...]] = []
-
             for block_i in range(B):
                 bt_i = int(block_type_ind[pose, block_i])
                 if bt_i < 0:
                     continue
-                n_conn_i = irc.shape[2]
-                for conn_i in range(n_conn_i):
+                for conn_i in range(n_conn):
                     block_j = int(irc[pose, block_i, conn_i, 0])
                     conn_j = int(irc[pose, block_i, conn_i, 1])
-                    if block_j < 0:
-                        continue
-                    # only handle each edge once
-                    if block_i >= block_j:
+                    if block_j < 0 or block_i >= block_j:
+                        # block_i >= block_j ensures each edge is emitted once.
                         continue
                     bt_j = int(block_type_ind[pose, block_j])
                     if bt_j < 0:
@@ -1130,82 +1073,26 @@ class CartBondedEnergyTerm(EnergyTerm):
 
                     off_i = int(block_coord_offset[pose, block_i])
                     off_j = int(block_coord_offset[pose, block_j])
-
                     pair_key = (bt_i, conn_i, bt_j, conn_j)
-                    # Skip pair keys that have no subgraphs at all — the
-                    # typical 1UBQ peptide bond hits one non-empty key and
-                    # ~N-1 empty ones, and the dict-get miss dominates
-                    # the loop cost.
-                    lengths_hit = inter_lengths_by_pair.get(pair_key)
-                    angles_hit = inter_angles_by_pair.get(pair_key)
-                    torsions_hit = inter_torsions_by_pair.get(pair_key)
-                    if not (lengths_hit or angles_hit or torsions_hit):
+
+                    # Skip pair keys with no subgraphs at all - the typical
+                    # 1UBQ peptide bond hits one non-empty key and ~N-1
+                    # empty ones, and the dict-get miss dominates loop cost.
+                    hits = [d.get(pair_key) for _, d, _, _ in _INTER_CATS]
+                    if not any(hits):
                         continue
 
-                    if lengths_hit:
-                        for atoms, is_on_B, params in lengths_hit:
+                    for (cat, _, _, _), hit in zip(_INTER_CATS, hits):
+                        if not hit:
+                            continue
+                        atoms_list, params_list = per_pose[cat]
+                        for atoms, is_on_B, params in hit:
                             g = tuple(
                                 (a + off_j) if b else (a + off_i)
                                 for a, b in zip(atoms, is_on_B)
                             )
-                            L_atoms.append(g)
-                            L_params.append(params)
-
-                    if angles_hit:
-                        for atoms, is_on_B, params in angles_hit:
-                            g = tuple(
-                                (a + off_j) if b else (a + off_i)
-                                for a, b in zip(atoms, is_on_B)
-                            )
-                            A_atoms.append(g)
-                            A_params.append(params)
-
-                    if torsions_hit:
-                        for atoms, is_on_B, params in torsions_hit:
-                            g = tuple(
-                                (a + off_j) if b else (a + off_i)
-                                for a, b in zip(atoms, is_on_B)
-                            )
-                            T_atoms.append(g)
-                            T_params.append(params)
-
-            inter_L_atoms_per_pose.append(L_atoms)
-            inter_L_params_per_pose.append(L_params)
-            inter_A_atoms_per_pose.append(A_atoms)
-            inter_A_params_per_pose.append(A_params)
-            inter_T_atoms_per_pose.append(T_atoms)
-            inter_T_params_per_pose.append(T_params)
-
-        def _pad_per_pose(
-            per_pose: List[List[Tuple[int, ...]]], k: int
-        ) -> Tuple[np.ndarray, np.ndarray]:
-            max_len = max((len(x) for x in per_pose), default=0)
-            max_len = max(max_len, 1)
-            atoms = np.full((P, max_len, k), -1, dtype=np.int32)
-            mask = np.zeros((P, max_len), dtype=bool)
-            for p, entries in enumerate(per_pose):
-                for j, e in enumerate(entries):
-                    atoms[p, j, :] = e
-                    mask[p, j] = True
-            return atoms, mask
-
-        def _pad_params_per_pose(
-            per_pose: List[List[Tuple[float, ...]]], k: int
-        ) -> np.ndarray:
-            max_len = max((len(x) for x in per_pose), default=0)
-            max_len = max(max_len, 1)
-            params = np.zeros((P, max_len, k), dtype=np.float32)
-            for p, entries in enumerate(per_pose):
-                for j, e in enumerate(entries):
-                    params[p, j, :] = e
-            return params
-
-        inter_L_atoms, inter_L_mask = _pad_per_pose(inter_L_atoms_per_pose, 2)
-        inter_L_params = _pad_params_per_pose(inter_L_params_per_pose, 2)
-        inter_A_atoms, inter_A_mask = _pad_per_pose(inter_A_atoms_per_pose, 3)
-        inter_A_params = _pad_params_per_pose(inter_A_params_per_pose, 2)
-        inter_T_atoms, inter_T_mask = _pad_per_pose(inter_T_atoms_per_pose, 4)
-        inter_T_params = _pad_params_per_pose(inter_T_params_per_pose, 6)
+                            atoms_list[pose].append(g)
+                            params_list[pose].append(params)
 
         # Mask out inter-residue subgraphs that reference a "phantom"
         # atom (coord exactly zero or non-finite), mirroring the intra-
@@ -1221,36 +1108,21 @@ class CartBondedEnergyTerm(EnergyTerm):
             all_present = np.all(present, axis=-1)  # [P, E]
             return mask & all_present
 
-        inter_L_mask = _mask_missing(inter_L_atoms, inter_L_mask)
-        inter_A_mask = _mask_missing(inter_A_atoms, inter_A_mask)
-        inter_T_mask = _mask_missing(inter_T_atoms, inter_T_mask)
-
-        return CartBondedTermState(
-            length_atoms=jnp.asarray(l_atoms),
-            length_params=jnp.asarray(l_params),
-            length_mask=jnp.asarray(l_mask),
-            angle_atoms=jnp.asarray(a_atoms),
-            angle_params=jnp.asarray(a_params),
-            angle_mask=jnp.asarray(a_mask),
-            torsion_atoms=jnp.asarray(t_atoms),
-            torsion_params=jnp.asarray(t_params),
-            torsion_mask=jnp.asarray(t_mask),
-            improper_atoms=jnp.asarray(i_atoms),
-            improper_params=jnp.asarray(i_params),
-            improper_mask=jnp.asarray(i_mask),
-            hxltorsion_atoms=jnp.asarray(h_atoms),
-            hxltorsion_params=jnp.asarray(h_params),
-            hxltorsion_mask=jnp.asarray(h_mask),
-            inter_length_atoms=jnp.asarray(inter_L_atoms),
-            inter_length_params=jnp.asarray(inter_L_params),
-            inter_length_mask=jnp.asarray(inter_L_mask),
-            inter_angle_atoms=jnp.asarray(inter_A_atoms),
-            inter_angle_params=jnp.asarray(inter_A_params),
-            inter_angle_mask=jnp.asarray(inter_A_mask),
-            inter_torsion_atoms=jnp.asarray(inter_T_atoms),
-            inter_torsion_params=jnp.asarray(inter_T_params),
-            inter_torsion_mask=jnp.asarray(inter_T_mask),
+        # (cat-key, state-field-prefix, atoms-arity, params-arity).
+        _INTER_OUT = (
+            ("L", "inter_length", 2, 2),
+            ("A", "inter_angle", 3, 2),
+            ("T", "inter_torsion", 4, 6),
         )
+        for cat, prefix, k_atoms, k_params in _INTER_OUT:
+            atoms, mask, _ = _pad_atoms(per_pose[cat][0], k_atoms)
+            params = _pad_params(per_pose[cat][1], k_params)
+            mask = _mask_missing(atoms, mask)
+            state_fields[f"{prefix}_atoms"] = jnp.asarray(atoms)
+            state_fields[f"{prefix}_params"] = jnp.asarray(params)
+            state_fields[f"{prefix}_mask"] = jnp.asarray(mask)
+
+        return CartBondedTermState(**state_fields)
 
     # --------------------------------------------------------------- #
     # Evaluation                                                       #
@@ -1264,24 +1136,22 @@ class CartBondedEnergyTerm(EnergyTerm):
     ) -> Dict[ScoreType, jax.Array]:
         coords = pose_stack.coords if coords_override is None else coords_override
         # coords: [P, A, 3]
-        n_poses = coords.shape[0]
 
         def _gather_xyz(global_atoms: jax.Array) -> jax.Array:
             """Gather coords by (pose, global_atom) indices.
 
-            ``global_atoms`` has shape ``[P, B, K, k]`` with ``-1``
-            sentinels in padding slots. We clamp the sentinel to 0 for
-            the gather (the results are masked out downstream) and use
+            ``global_atoms`` has any leading shape ``[P, ..., k]`` with
+            ``-1`` sentinels in padding slots. We clamp the sentinel to
+            0 for the gather (results are masked out downstream) and use
             ``jnp.take_along_axis`` along the per-pose atom axis.
+            Returns ``[*orig_shape, 3]``.
             """
             safe = jnp.where(global_atoms >= 0, global_atoms, 0)
-            # shape [P, B, K, k] -> flatten B*K*k for a single take per pose
-            P, B, K, k = safe.shape
-            flat = safe.reshape(P, B * K * k)  # int32[P, M]
-            # coords: [P, A, 3]; gather along A.
+            orig_shape = safe.shape
+            flat = safe.reshape(orig_shape[0], -1)  # [P, M]
             idx = flat[:, :, None].repeat(3, axis=-1)  # [P, M, 3]
             gathered = jnp.take_along_axis(coords, idx, axis=1)  # [P, M, 3]
-            return gathered.reshape(P, B, K, k, 3)
+            return gathered.reshape(*orig_shape, 3)
 
         # Lengths --------------------------------------------------- #
         la = term_state.length_atoms  # [P, B, L, 2]
@@ -1305,78 +1175,48 @@ class CartBondedEnergyTerm(EnergyTerm):
         a_E = jnp.where(term_state.angle_mask, a_E, 0.0)
         cart_angles = jnp.sum(a_E, axis=(1, 2))
 
-        # Proper torsions ------------------------------------------- #
-        ta = term_state.torsion_atoms  # [P, B, T, 4]
-        txyz = _gather_xyz(ta)
-        t_phi = dihedral_angle(
-            txyz[..., 0, :], txyz[..., 1, :], txyz[..., 2, :], txyz[..., 3, :]
-        )
-        # Params: (k1, k2, k3, phi1, phi2, phi3) — sum of three cosines
-        # with periodicities 1, 2, 3. We reuse hxltorsion_E which has
-        # exactly that form (no 0.5 prefactor), matching the upstream
-        # ``cbtorsion_V_dV`` helper.
-        t_k1 = term_state.torsion_params[..., 0]
-        t_k2 = term_state.torsion_params[..., 1]
-        t_k3 = term_state.torsion_params[..., 2]
-        t_phi1 = term_state.torsion_params[..., 3]
-        t_phi2 = term_state.torsion_params[..., 4]
-        t_phi3 = term_state.torsion_params[..., 5]
-        t_E = hxltorsion_E(t_phi, t_k1, t_k2, t_k3, t_phi1, t_phi2, t_phi3)
-        t_E = jnp.where(term_state.torsion_mask, t_E, 0.0)
-        cart_torsions = jnp.sum(t_E, axis=(1, 2))
+        # Sum-of-three-cosines torsion: ``hxltorsion_E`` form is shared by
+        # proper torsions, impropers, hxl torsions, and inter-residue
+        # torsions in upstream ``cbtorsion_V_dV``; only the score-type
+        # bucket differs.
+        def _cos3_score(atoms_field, params_field, mask_field):
+            xyz = _gather_xyz(atoms_field)
+            phi = dihedral_angle(
+                xyz[..., 0, :], xyz[..., 1, :], xyz[..., 2, :], xyz[..., 3, :]
+            )
+            E = hxltorsion_E(
+                phi,
+                params_field[..., 0], params_field[..., 1], params_field[..., 2],
+                params_field[..., 3], params_field[..., 4], params_field[..., 5],
+            )
+            return jnp.sum(jnp.where(mask_field, E, 0.0), axis=(1, 2))
 
-        # Impropers (sum of three cosines) -------------------------- #
-        # Upstream ``cbtorsion_V_dV`` (potentials.hh) uses the same
-        # sum-of-three-cosines form for proper torsions, impropers, and
-        # hxl torsions; only the score-type bucket differs.
-        ia = term_state.improper_atoms  # [P, B, I, 4]
-        ixyz = _gather_xyz(ia)
-        i_phi = dihedral_angle(
-            ixyz[..., 0, :], ixyz[..., 1, :], ixyz[..., 2, :], ixyz[..., 3, :]
+        cart_torsions = _cos3_score(
+            term_state.torsion_atoms,
+            term_state.torsion_params,
+            term_state.torsion_mask,
         )
-        i_k1 = term_state.improper_params[..., 0]
-        i_k2 = term_state.improper_params[..., 1]
-        i_k3 = term_state.improper_params[..., 2]
-        i_phi1 = term_state.improper_params[..., 3]
-        i_phi2 = term_state.improper_params[..., 4]
-        i_phi3 = term_state.improper_params[..., 5]
-        i_E = hxltorsion_E(i_phi, i_k1, i_k2, i_k3, i_phi1, i_phi2, i_phi3)
-        i_E = jnp.where(term_state.improper_mask, i_E, 0.0)
-        cart_impropers = jnp.sum(i_E, axis=(1, 2))
-
-        # Hydroxyl torsions ----------------------------------------- #
-        ha = term_state.hxltorsion_atoms  # [P, B, H, 4]
-        hxyz = _gather_xyz(ha)
-        h_phi = dihedral_angle(
-            hxyz[..., 0, :], hxyz[..., 1, :], hxyz[..., 2, :], hxyz[..., 3, :]
+        cart_impropers = _cos3_score(
+            term_state.improper_atoms,
+            term_state.improper_params,
+            term_state.improper_mask,
         )
-        h_k1 = term_state.hxltorsion_params[..., 0]
-        h_k2 = term_state.hxltorsion_params[..., 1]
-        h_k3 = term_state.hxltorsion_params[..., 2]
-        h_phi1 = term_state.hxltorsion_params[..., 3]
-        h_phi2 = term_state.hxltorsion_params[..., 4]
-        h_phi3 = term_state.hxltorsion_params[..., 5]
-        h_E = hxltorsion_E(h_phi, h_k1, h_k2, h_k3, h_phi1, h_phi2, h_phi3)
-        h_E = jnp.where(term_state.hxltorsion_mask, h_E, 0.0)
-        cart_hxltorsions = jnp.sum(h_E, axis=(1, 2))
+        cart_hxltorsions = _cos3_score(
+            term_state.hxltorsion_atoms,
+            term_state.hxltorsion_params,
+            term_state.hxltorsion_mask,
+        )
 
         # ---------- Inter-residue contributions --------------------- #
         # Inter-residue arrays are stored as ``[P, E, k]`` (one entry
         # per pose per connection-spanning subgraph) rather than
-        # ``[P, B, K, k]``. We gather coords with a 3D-flavoured
-        # ``jnp.take_along_axis`` and reduce over the E axis.
-        def _gather_xyz_3d(global_atoms: jax.Array) -> jax.Array:
-            safe = jnp.where(global_atoms >= 0, global_atoms, 0)
-            P, E, k = safe.shape
-            flat = safe.reshape(P, E * k)
-            idx = flat[:, :, None].repeat(3, axis=-1)
-            gathered = jnp.take_along_axis(coords, idx, axis=1)
-            return gathered.reshape(P, E, k, 3)
+        # ``[P, B, K, k]``. ``_gather_xyz`` handles both shapes; the
+        # output here is ``[P, E, k, 3]`` and we reduce over E.
 
         # Inter-residue bond lengths ------------------------------- #
         ila = term_state.inter_length_atoms  # [P, E, 2]
         if ila.shape[1] > 0:
-            ilxyz = _gather_xyz_3d(ila)  # [P, E, 2, 3]
+            ilxyz = _gather_xyz(ila)  # [P, E, 2, 3]
             il_d0 = term_state.inter_length_params[..., 0]
             il_K = term_state.inter_length_params[..., 1]
             il_d = distance(ilxyz[..., 0, :], ilxyz[..., 1, :])
@@ -1387,7 +1227,7 @@ class CartBondedEnergyTerm(EnergyTerm):
         # Inter-residue bond angles -------------------------------- #
         iaa = term_state.inter_angle_atoms  # [P, E, 3]
         if iaa.shape[1] > 0:
-            iaxyz = _gather_xyz_3d(iaa)
+            iaxyz = _gather_xyz(iaa)
             ia_x0 = term_state.inter_angle_params[..., 0]
             ia_K = term_state.inter_angle_params[..., 1]
             ia_theta = pt_interior_angle(
@@ -1400,19 +1240,16 @@ class CartBondedEnergyTerm(EnergyTerm):
         # Inter-residue proper torsions ---------------------------- #
         ita = term_state.inter_torsion_atoms  # [P, E, 4]
         if ita.shape[1] > 0:
-            itxyz = _gather_xyz_3d(ita)
+            itxyz = _gather_xyz(ita)
             it_phi = dihedral_angle(
                 itxyz[..., 0, :], itxyz[..., 1, :],
                 itxyz[..., 2, :], itxyz[..., 3, :],
             )
-            it_k1 = term_state.inter_torsion_params[..., 0]
-            it_k2 = term_state.inter_torsion_params[..., 1]
-            it_k3 = term_state.inter_torsion_params[..., 2]
-            it_phi1 = term_state.inter_torsion_params[..., 3]
-            it_phi2 = term_state.inter_torsion_params[..., 4]
-            it_phi3 = term_state.inter_torsion_params[..., 5]
+            itp = term_state.inter_torsion_params
             it_E = hxltorsion_E(
-                it_phi, it_k1, it_k2, it_k3, it_phi1, it_phi2, it_phi3
+                it_phi,
+                itp[..., 0], itp[..., 1], itp[..., 2],
+                itp[..., 3], itp[..., 4], itp[..., 5],
             )
             it_E = jnp.where(term_state.inter_torsion_mask, it_E, 0.0)
             cart_torsions = cart_torsions + jnp.sum(it_E, axis=1)
