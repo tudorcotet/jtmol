@@ -114,7 +114,6 @@ def _lkball_pose_palette_jit(
     is_hxl_table: jax.Array,
     is_ph_table: jax.Array,
     is_hydrogen_table: jax.Array,
-    nbr_table: jax.Array,
     B_local_table: jax.Array,
     B0_local_table: jax.Array,
     acc_hyb_table: jax.Array,
@@ -164,13 +163,6 @@ def _lkball_pose_palette_jit(
     heavy = jnp.logical_not(is_hydrogen)
     is_polar = jnp.logical_and(heavy, jnp.logical_or(is_donor, is_acc))
 
-    # Neighbour list scatter.
-    local_nbrs = nbr_table[bti_of_atom, local_for_atom]  # [P, N, K]
-    valid_nbr = local_nbrs >= 0
-    nbr_idx_pose = block_offset[:, :, None] + jnp.where(valid_nbr, local_nbrs, 0)
-    keep = valid_nbr & atom_is_real[:, :, None]
-    nbr_idx_pose = jnp.where(keep, nbr_idx_pose, -1)
-
     # Acceptor bases + donor Hs.
     B_loc = B_local_table[bti_of_atom, local_for_atom]
     B0_loc = B0_local_table[bti_of_atom, local_for_atom]
@@ -204,8 +196,6 @@ def _lkball_pose_palette_jit(
         is_polar,
         heavy,
         atom_is_real,
-        nbr_idx_pose,
-        keep,
         B_idx.astype(jnp.int32),
         B0_idx.astype(jnp.int32),
         acc_hyb_out.astype(jnp.int32),
@@ -253,12 +243,6 @@ class LKBallTermState:
     is_occluder: jax.Array
     # Atom realness mask (for padding).
     is_real: jax.Array
-
-    # Indices of up to ``max_n_neighbors`` bonded neighbors per atom,
-    # shape [n_poses, max_n_atoms_per_pose, max_n_neighbors].
-    neighbor_idx: jax.Array
-    # Bool mask for the above (True = valid neighbor).
-    neighbor_mask: jax.Array
 
     # ---- Upstream-faithful water-placement metadata --------------------- #
     # Per-polar-atom acceptor base (B) and base-of-base (B0) atom indices
@@ -387,12 +371,6 @@ class LKBallEnergyTerm(EnergyTerm):
         shape = (n_poses, max_n_atoms_per_pose)
         zero_f = jnp.zeros(shape, dtype=jnp.float32)
         zero_b = jnp.zeros(shape, dtype=jnp.bool_)
-        zero_nbr = jnp.full(
-            (n_poses, max_n_atoms_per_pose, self.max_n_neighbors),
-            -1,
-            dtype=jnp.int32,
-        )
-        zero_nbr_mask = jnp.zeros_like(zero_nbr, dtype=jnp.bool_)
         zero_H = jnp.full(
             (n_poses, max_n_atoms_per_pose, self.max_H_per_donor),
             -1,
@@ -423,8 +401,6 @@ class LKBallEnergyTerm(EnergyTerm):
                 is_polar_2d,
                 is_occluder_2d,
                 is_real_2d,
-                neighbor_idx_2d,
-                neighbor_mask_2d,
                 B_idx_2d,
                 B0_idx_2d,
                 acc_hyb_2d,
@@ -454,8 +430,6 @@ class LKBallEnergyTerm(EnergyTerm):
             is_polar_2d = zero_b
             is_occluder_2d = zero_b
             is_real_2d = zero_b
-            neighbor_idx_2d = zero_nbr
-            neighbor_mask_2d = zero_nbr_mask
             B_idx_2d = jnp.full(shape, -1, dtype=jnp.int32)
             B0_idx_2d = jnp.full(shape, -1, dtype=jnp.int32)
             acc_hyb_2d = zero_i
@@ -481,8 +455,6 @@ class LKBallEnergyTerm(EnergyTerm):
             is_polar=is_polar_2d,
             is_occluder=is_occluder_2d,
             is_real=is_real_2d,
-            neighbor_idx=neighbor_idx_2d,
-            neighbor_mask=neighbor_mask_2d,
             B_idx=B_idx_2d,
             B0_idx=B0_idx_2d,
             acc_hybridization=acc_hyb_2d,
@@ -582,8 +554,6 @@ class LKBallEnergyTerm(EnergyTerm):
             "is_polar": state.is_polar,
             "is_occluder": state.is_occluder,
             "is_real": state.is_real,
-            "neighbor_idx": state.neighbor_idx,
-            "neighbor_mask": state.neighbor_mask,
             "B_idx": state.B_idx,
             "B0_idx": state.B0_idx,
             "acc_hybridization": state.acc_hybridization,
@@ -1016,23 +986,20 @@ class LKBallEnergyTerm(EnergyTerm):
         jax.Array, jax.Array, jax.Array, jax.Array, jax.Array,  # flags
         jax.Array,  # is_occluder
         jax.Array,  # is_real
-        jax.Array, jax.Array,  # neighbor_idx, neighbor_mask
         jax.Array, jax.Array, jax.Array,  # B_idx, B0_idx, acc_hyb
         jax.Array, jax.Array, jax.Array,  # attached_H_idx, _mask, n_H
     ]:
         """Batched per-pose-atom scatter of all LK-ball palette tables.
 
         Consolidates every LK-ball palette scatter (simple LJ/LK params,
-        polar flags, acceptor bases, donor Hs, neighbour lists) into a
-        single jit-compiled function
-        :func:`_lkball_pose_palette_jit`. Previously this was ~10
-        separate JAX dispatches totalling ~5 ms per setup; the fused
-        version runs in ~100 us once the trace is cached.
+        polar flags, acceptor bases, donor Hs) into a single jit-compiled
+        function :func:`_lkball_pose_palette_jit`. ``max_n_neighbors`` is
+        accepted for backwards compatibility but unused.
         """
+        del max_n_neighbors  # ponytail: kept on the public ctor for compat
         # Ensure every palette-level cache is populated. Idempotent.
         self._annotate_pbt_ljlk_tables(pbt)
         self._annotate_pbt_polar_flags(pbt)
-        self._per_atom_neighbors_cache(pbt, max_n_neighbors)
         self._annotate_pbt_acceptor_bases(pbt, max_H_per_donor)
 
         bti = jnp.asarray(pose_stack.block_type_ind, dtype=jnp.int32)
@@ -1053,43 +1020,12 @@ class LKBallEnergyTerm(EnergyTerm):
             pbt.lkball_bt_is_hxl,
             pbt.lkball_bt_is_ph,
             pbt.lkball_bt_is_hydrogen,
-            getattr(pbt, f"lkball_nbr_table_k{max_n_neighbors}"),
             getattr(pbt, f"lkball_bt_B_local_k{max_H_per_donor}"),
             getattr(pbt, f"lkball_bt_B0_local_k{max_H_per_donor}"),
             getattr(pbt, f"lkball_bt_acc_hyb_k{max_H_per_donor}"),
             getattr(pbt, f"lkball_bt_H_local_k{max_H_per_donor}"),
             A,
         )
-
-    def _per_atom_neighbors_cache(self, pbt: Any, max_n_neighbors: int) -> None:
-        """Build the palette-level neighbour table (idempotent).
-
-        ``_per_atom_full_palette`` calls this to ensure the cache exists;
-        the actual pose-level scatter happens inside the batched jit
-        call :func:`_lkball_pose_palette_jit`.
-        """
-        cache_key = f"lkball_nbr_table_k{max_n_neighbors}"
-        if hasattr(pbt, cache_key):
-            return
-        n_types = int(pbt.n_types)
-        max_atoms_block = int(pbt.max_n_atoms)
-        bond_indices_np = np.asarray(pbt.bond_indices)
-        n_bonds_np = np.asarray(pbt.n_bonds)
-        nbr_table = np.full(
-            (n_types, max_atoms_block, max_n_neighbors), -1, dtype=np.int32
-        )
-        for bt in range(n_types):
-            filled = np.zeros(max_atoms_block, dtype=np.int32)
-            for e in range(int(n_bonds_np[bt])):
-                a = int(bond_indices_np[bt, e, 0])
-                b = int(bond_indices_np[bt, e, 1])
-                if 0 <= a < max_atoms_block and filled[a] < max_n_neighbors:
-                    nbr_table[bt, a, filled[a]] = b
-                    filled[a] += 1
-                if 0 <= b < max_atoms_block and filled[b] < max_n_neighbors:
-                    nbr_table[bt, b, filled[b]] = a
-                    filled[b] += 1
-        setattr(pbt, cache_key, jnp.asarray(nbr_table, dtype=jnp.int32))
 
 # --------------------------------------------------------------------------- #
 # Internal helpers                                                             #
