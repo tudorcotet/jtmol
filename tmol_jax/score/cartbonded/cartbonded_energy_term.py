@@ -867,46 +867,33 @@ class CartBondedEnergyTerm(EnergyTerm):
         if cached is not None:
             return cached
 
-        per_type_length_atoms: List[List[Tuple[int, int]]] = []
-        per_type_length_params: List[List[Tuple[float, float]]] = []
-        per_type_angle_atoms: List[List[Tuple[int, int, int]]] = []
-        per_type_angle_params: List[List[Tuple[float, float]]] = []
-        per_type_torsion_atoms: List[List[Tuple[int, int, int, int]]] = []
-        per_type_torsion_params: List[List[Tuple[float, ...]]] = []
-        per_type_improper_atoms: List[List[Tuple[int, int, int, int]]] = []
-        per_type_improper_params: List[List[Tuple[float, ...]]] = []
-        per_type_hxl_atoms: List[List[Tuple[int, int, int, int]]] = []
-        per_type_hxl_params: List[List[Tuple[float, ...]]] = []
-
+        # (output prefix, atoms_arity, params_arity).
+        _CATEGORIES = (
+            ("length", 2, 2),
+            ("angle", 3, 2),
+            ("torsion", 4, 6),
+            ("improper", 4, 6),
+            ("hxltorsion", 4, 6),
+        )
+        per_type: Dict[str, Tuple[List, List]] = {
+            name: ([], []) for name, _, _ in _CATEGORIES
+        }
         for rt in pbt.active_block_types:
-            lengths, angles, torsions, impropers, hxls = _subgraphs_for_block_type(
+            sgs = _subgraphs_for_block_type(
                 rt, self.cart_database, self.improper_roots
             )
-            per_type_length_atoms.append([a for a, _ in lengths])
-            per_type_length_params.append([p for _, p in lengths])
-            per_type_angle_atoms.append([a for a, _ in angles])
-            per_type_angle_params.append([p for _, p in angles])
-            per_type_torsion_atoms.append([a for a, _ in torsions])
-            per_type_torsion_params.append([p for _, p in torsions])
-            per_type_improper_atoms.append([a for a, _ in impropers])
-            per_type_improper_params.append([p for _, p in impropers])
-            per_type_hxl_atoms.append([a for a, _ in hxls])
-            per_type_hxl_params.append([p for _, p in hxls])
+            for (name, _, _), sg in zip(_CATEGORIES, sgs):
+                atoms_l, params_l = per_type[name]
+                atoms_l.append([a for a, _p in sg])
+                params_l.append([p for _a, p in sg])
 
-        length_atoms, length_mask, _ = _pad_atoms(per_type_length_atoms, 2)
-        length_params = _pad_params(per_type_length_params, 2)
-
-        angle_atoms, angle_mask, _ = _pad_atoms(per_type_angle_atoms, 3)
-        angle_params = _pad_params(per_type_angle_params, 2)
-
-        torsion_atoms, torsion_mask, _ = _pad_atoms(per_type_torsion_atoms, 4)
-        torsion_params = _pad_params(per_type_torsion_params, 6)
-
-        improper_atoms, improper_mask, _ = _pad_atoms(per_type_improper_atoms, 4)
-        improper_params = _pad_params(per_type_improper_params, 6)
-
-        hxl_atoms, hxl_mask, _ = _pad_atoms(per_type_hxl_atoms, 4)
-        hxl_params = _pad_params(per_type_hxl_params, 6)
+        intra_tables: Dict[str, np.ndarray] = {}
+        for name, k_atoms, k_params in _CATEGORIES:
+            atoms_l, params_l = per_type[name]
+            a, m, _ = _pad_atoms(atoms_l, k_atoms)
+            intra_tables[f"{name}_atoms"] = a
+            intra_tables[f"{name}_params"] = _pad_params(params_l, k_params)
+            intra_tables[f"{name}_mask"] = m
 
         # --------- Inter-residue subgraph tables -------------------- #
         # We enumerate every ordered (block_type_A, conn_A, block_type_B,
@@ -957,21 +944,7 @@ class CartBondedEnergyTerm(EnergyTerm):
                             inter_torsions_by_pair[pair_key] = torsions
 
         tables = {
-            "length_atoms": length_atoms,
-            "length_params": length_params,
-            "length_mask": length_mask,
-            "angle_atoms": angle_atoms,
-            "angle_params": angle_params,
-            "angle_mask": angle_mask,
-            "torsion_atoms": torsion_atoms,
-            "torsion_params": torsion_params,
-            "torsion_mask": torsion_mask,
-            "improper_atoms": improper_atoms,
-            "improper_params": improper_params,
-            "improper_mask": improper_mask,
-            "hxltorsion_atoms": hxl_atoms,
-            "hxltorsion_params": hxl_params,
-            "hxltorsion_mask": hxl_mask,
+            **intra_tables,
             "inter_lengths_by_pair": inter_lengths_by_pair,
             "inter_angles_by_pair": inter_angles_by_pair,
             "inter_torsions_by_pair": inter_torsions_by_pair,
