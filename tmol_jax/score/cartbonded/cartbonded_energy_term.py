@@ -926,9 +926,6 @@ class CartBondedEnergyTerm(EnergyTerm):
         # list of (local_atoms, is_on_B, params) triples per category
         # (length/angle/torsion). Pairs with no matches still have an
         # empty list so the indexing at runtime is stable.
-        n_types = len(pbt.active_block_types)
-        max_conn = int(np.asarray(pbt.max_n_conn)) if pbt.max_n_conn > 0 else 0
-
         wild_dbs = _build_cart_wildcard_dbs(self.cart_database)
         res_dbs = [
             _build_cart_dbs_for_residue(rt, self.cart_database)
