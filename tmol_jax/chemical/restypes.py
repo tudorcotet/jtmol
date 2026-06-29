@@ -586,10 +586,6 @@ __all__ = [
     "uaid_t",
     "ResName3",
     "IcoorIndex",
-    "one2three",
-    "three2one",
-    "one_to_three",
-    "three_to_one",
     "RefinedResidueType",
     "ResidueTypeSet",
 ]
