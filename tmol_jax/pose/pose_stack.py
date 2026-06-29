@@ -272,14 +272,6 @@ class PoseStack:
         bco = block_coord_offset_from_counts(bti, packed_block_types)
         bco64 = bco.astype(jnp.int64)
 
-        # Lazy PDBInfo import — the sibling module may not exist yet in
-        # the parallel port; we only care about the object, not the type.
-        if pdb_info is not None:
-            try:  # pragma: no cover - defensive import
-                from tmol_jax.pose.pdb_info import PDBInfo as _PDBInfo  # noqa: F401
-            except Exception:
-                pass
-
         return cls(
             packed_block_types=packed_block_types,
             coords=coords_j,
