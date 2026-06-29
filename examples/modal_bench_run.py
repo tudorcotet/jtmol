@@ -97,7 +97,10 @@ def bench_one_pose(pdb_label: str = "1ubq") -> dict:
         out["n_atoms"] = n_atoms
         print(f"n_atoms={n_atoms}", flush=True)
 
-        sfxn = beta2016_score_function()
+        # Enable LJLK's cell-list path. Cuts the dense [P, N, N] LJ/LK
+        # pair tensor down to [P, N, max_nbr] (~50 at 6 Å), zero parity
+        # drift on 1ubq (verified on CPU).
+        sfxn = beta2016_score_function(use_neighbor_list=True)
         state = sfxn.setup_for_pose_stack(jpose)
         base = jnp.asarray(jpose.coords)
 
@@ -337,13 +340,133 @@ def _format_markdown(result: dict) -> str:
     return "\n".join(lines)
 
 
+@app.function(gpu="A100-40GB:2", timeout=60 * 30)
+def bench_multi_gpu(pdb_label: str = "1ubq") -> dict:
+    """pmap'd jtmol on 2× A100. K in {64, 256, 1024, 4096}.
+
+    Each device handles K/n_dev poses; within each device the
+    ``lax.map`` chunking is the same as the single-GPU bench. We
+    expect ~2× speedup at large K once data-transfer + barrier
+    overhead is amortized.
+    """
+    import os, sys, time, traceback
+    target = "/root/jtmol/tmol"
+    if not os.path.islink(target):
+        os.symlink("/opt/tmol_src", target)
+    if "/root/jtmol" not in sys.path:
+        sys.path.insert(0, "/root/jtmol")
+
+    import warnings
+    warnings.filterwarnings("ignore")
+
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    out: dict = {"pdb": pdb_label, "rows": [], "errors": []}
+    n_dev = jax.device_count()
+    out["n_devices"] = n_dev
+    out["devices"] = [str(d) for d in jax.devices()]
+    print(f"n_devices={n_dev} devices={jax.devices()}", flush=True)
+
+    pdb_path = f"/root/jtmol/tmol_jax/tests/data/{pdb_label}.pdb"
+
+    try:
+        import tmol_jax
+        from tmol_jax import beta2016_score_function
+        from tmol_jax.score import batched_energy, pmap_batched_energy
+
+        jpose = tmol_jax.pose_stack_from_pdb(pdb_path)
+        n_atoms = int(jpose.coords.shape[1])
+        out["n_atoms"] = n_atoms
+
+        sfxn = beta2016_score_function(use_neighbor_list=True)
+        state = sfxn.setup_for_pose_stack(jpose)
+        base = jnp.asarray(jpose.coords)
+
+        K_list = [64, 256, 1024, 4096]
+        # only K's divisible by n_dev
+        K_list = [K for K in K_list if K % n_dev == 0]
+
+        for K in K_list:
+            try:
+                key = jax.random.PRNGKey(K)
+                noise = jax.random.normal(key, (K,) + base.shape) * 0.05
+                batch = base[None] + noise
+
+                # Single-GPU baseline (lax.map only)
+                single_fn = jax.jit(batched_energy(sfxn, jpose, state=state, chunk_size=CHUNK_SIZE, score_dtype=jnp.float32))
+                jax.block_until_ready(single_fn(batch))  # warmup
+                t0 = time.perf_counter()
+                for _ in range(N_REPEATS):
+                    jax.block_until_ready(single_fn(batch))
+                single_ms = (time.perf_counter() - t0) / N_REPEATS * 1000
+
+                # Multi-GPU (pmap)
+                multi_fn = pmap_batched_energy(sfxn, jpose, state=state, chunk_size=CHUNK_SIZE, score_dtype=jnp.float32)
+                jax.block_until_ready(multi_fn(batch))  # warmup
+                t0 = time.perf_counter()
+                for _ in range(N_REPEATS):
+                    jax.block_until_ready(multi_fn(batch))
+                multi_ms = (time.perf_counter() - t0) / N_REPEATS * 1000
+
+                row = {
+                    "K": K,
+                    "single_gpu_ms": single_ms,
+                    "multi_gpu_ms": multi_ms,
+                    "single_per_pose_ms": single_ms / K,
+                    "multi_per_pose_ms": multi_ms / K,
+                    "speedup": single_ms / multi_ms if multi_ms > 0 else 0,
+                }
+                out["rows"].append(row)
+                print(
+                    f"K={K:5d}: 1-GPU={single_ms:8.2f}ms ({single_ms/K:6.3f}/pose)  "
+                    f"{n_dev}-GPU={multi_ms:8.2f}ms ({multi_ms/K:6.3f}/pose)  "
+                    f"speedup={single_ms/multi_ms:.2f}×",
+                    flush=True,
+                )
+            except Exception as exc:
+                out["errors"].append(f"K={K}: {exc!r}")
+                print(f"K={K} FAILED: {exc!r}", flush=True)
+                continue
+    except Exception as exc:
+        out["errors"].append(f"setup: {exc!r}\n{traceback.format_exc()}")
+        print(f"setup FAILED: {exc!r}", flush=True)
+
+    return out
+
+
+def _format_multi_gpu_md(result: dict) -> str:
+    lines = []
+    n_dev = result.get("n_devices", "?")
+    lines.append(f"## pmap multi-GPU sweep ({result['pdb']}, n_atoms={result.get('n_atoms','?')}, {n_dev} devices)")
+    lines.append("")
+    lines.append(f"GPUs: {result.get('devices', '?')}.  Forward only.  Precision: float32 (geometry), float64 (accumulator).")
+    lines.append("")
+    lines.append(f"| K | 1-GPU (ms) | {n_dev}-GPU (ms) | per-pose 1-GPU | per-pose {n_dev}-GPU | speedup |")
+    lines.append("|---:|---:|---:|---:|---:|---:|")
+    for row in result["rows"]:
+        lines.append(
+            f"| {row['K']} | {row['single_gpu_ms']:.2f} | {row['multi_gpu_ms']:.2f} | "
+            f"{row['single_per_pose_ms']:.3f} | {row['multi_per_pose_ms']:.3f} | {row['speedup']:.2f}× |"
+        )
+    if result.get("errors"):
+        lines.append("")
+        lines.append("Errors:")
+        for e in result["errors"]:
+            lines.append(f"- {e}")
+    return "\n".join(lines)
+
+
 @app.local_entrypoint()
 def run_bench(pdb: str = "1ubq"):
-    result = bench_one_pose.remote(pdb)
-    md = _format_markdown(result)
+    single_result = bench_one_pose.remote(pdb)
+    multi_result = bench_multi_gpu.remote(pdb)
+    md_single = _format_markdown(single_result)
+    md_multi = _format_multi_gpu_md(multi_result)
+    md = md_single + "\n\n" + md_multi + "\n"
     print()
     print(md)
-    # also save to docs/
     repo = pathlib.Path(__file__).resolve().parents[1]
     out_path = repo / "docs" / "BENCHMARKS.md"
     out_path.write_text(md)

@@ -117,4 +117,54 @@ def batched_value_and_grad(
     return fn
 
 
-__all__ = ["batched_energy", "batched_value_and_grad"]
+def pmap_batched_energy(
+    sfxn: Any,
+    pose_stack: Any,
+    *,
+    state: Optional[Any] = None,
+    chunk_size: int = 16,
+    score_dtype: Any = jnp.float32,
+) -> Callable[[jax.Array], jax.Array]:
+    """Multi-device variant of :func:`batched_energy`.
+
+    Reshapes a ``[K, n_atoms, 3]`` coords batch to
+    ``[n_devices, K // n_devices, n_atoms, 3]``, pmaps the per-device
+    score (which itself ``lax.map``s in chunks of ``chunk_size``),
+    flattens the result back. ``K`` must be divisible by
+    ``jax.device_count()``.
+
+    ``pose_stack`` and ``state`` are replicated across devices via
+    :func:`jax.device_put_replicated`.
+
+    Use this when a multi-GPU host is available (Modal ``A100-40GB:2``,
+    ``A100-80GB:4``, ``H100:8``, etc.). On a single-GPU host this
+    degenerates to :func:`batched_energy` with extra reshape overhead.
+    """
+    n_dev = jax.device_count()
+    if state is None:
+        state = sfxn.setup_for_pose_stack(pose_stack)
+
+    rep_state = jax.device_put_replicated(state, jax.devices())
+
+    def per_device(rep_st: Any, coords_chunk: jax.Array) -> jax.Array:
+        def single(coords: jax.Array) -> jax.Array:
+            if score_dtype is not None:
+                coords = coords.astype(score_dtype)
+            per_pose = sfxn(pose_stack, state=rep_st, coords_override=coords)
+            return per_pose.astype(jnp.float64).sum()
+        return jax.lax.map(single, coords_chunk, batch_size=chunk_size)
+
+    pmapped = jax.pmap(per_device)
+
+    def fn(coords_batch: jax.Array) -> jax.Array:
+        K = coords_batch.shape[0]
+        if K % n_dev != 0:
+            raise ValueError(f"K={K} not divisible by n_devices={n_dev}")
+        reshaped = coords_batch.reshape((n_dev, K // n_dev) + coords_batch.shape[1:])
+        out = pmapped(rep_state, reshaped)
+        return out.reshape(-1)
+
+    return fn
+
+
+__all__ = ["batched_energy", "batched_value_and_grad", "pmap_batched_energy"]

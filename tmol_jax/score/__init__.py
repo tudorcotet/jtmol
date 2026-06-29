@@ -19,13 +19,22 @@ from __future__ import annotations
 
 from typing import Optional
 
-from tmol_jax.score.batched import batched_energy, batched_value_and_grad
+from tmol_jax.score.batched import (
+    batched_energy,
+    batched_value_and_grad,
+    pmap_batched_energy,
+)
 from tmol_jax.score.energy_term import EnergyTerm
 from tmol_jax.score.score_function import ScoreFunction, ScoreFunctionState
 from tmol_jax.score.score_types import ScoreType
 
 
-def beta2016_score_function(param_db: Optional[object] = None) -> ScoreFunction:
+def beta2016_score_function(
+    param_db: Optional[object] = None,
+    *,
+    use_neighbor_list: bool = False,
+    neighbor_list_cutoff: float = 6.0,
+) -> ScoreFunction:
     """Return a :class:`ScoreFunction` configured for beta_nov2016_cart.
 
     The weights come directly from upstream tmol's
@@ -40,6 +49,20 @@ def beta2016_score_function(param_db: Optional[object] = None) -> ScoreFunction:
         Optional :class:`tmol_jax.database.ParameterDatabase`. If
         omitted, we fall back to the process default (via
         ``ParameterDatabase.get_default()``).
+    use_neighbor_list
+        Toggle the cell-list / half-list path on the LJLK term (which
+        contributes 3 channels: fa_ljatr, fa_ljrep, fa_lk). The dense
+        ``[P, N, N]`` pair tensor becomes ``[P, N, max_nbr]`` with the
+        ``neighbor_list_cutoff`` (default 6 Å, matches LJ/LK ``cpoly_dmax``).
+        elec / lk_ball still use the dense path; wiring NL into those
+        is a real refactor (1-2 days each) and is left for a future
+        pass — combined with :func:`batched_energy`'s ``lax.map``
+        chunking, LJLK-NL alone usually closes the OOM on
+        ~5000-atom complexes.
+    neighbor_list_cutoff
+        Cutoff radius for the cell-list builder, Å. The default 6.0
+        matches LJLK's ``cpoly_dmax``; lowering it past that drops real
+        pair interactions and shifts the score.
 
     Returns
     -------
@@ -85,6 +108,12 @@ def beta2016_score_function(param_db: Optional[object] = None) -> ScoreFunction:
     sfxn.set_weight(ScoreType.ref, 1.0)
     sfxn.set_weight(ScoreType.gen_torsions, 1.0)
 
+    if use_neighbor_list:
+        for term in sfxn.terms:
+            if hasattr(term, "use_neighbor_list"):
+                term.use_neighbor_list = True
+                term.neighbor_list_cutoff = neighbor_list_cutoff
+
     return sfxn
 
 
@@ -96,4 +125,5 @@ __all__ = [
     "beta2016_score_function",
     "batched_energy",
     "batched_value_and_grad",
+    "pmap_batched_energy",
 ]
