@@ -238,12 +238,8 @@ class DunbrackEnergyTerm(EnergyTerm):
                 bb_step,
                 bb_period,
             ) = self._stack_rotameric_tables(all_libs, n_rot)
-            max_nchi = int(ri2ti.shape[1])
-            max_nchi_int = 0
-            tmp = max_nchi
-            while tmp > 1:
-                tmp //= 3
-                max_nchi_int += 1
+            # ri2ti.shape[1] == 3 ** max_nchi; pass the dim directly so the
+            # semirot helper can size its own rot-bin map without recomputing log3.
             (
                 sr_table,
                 sr_index,
@@ -252,7 +248,7 @@ class DunbrackEnergyTerm(EnergyTerm):
                 sr_step,
                 sr_period,
             ) = self._stack_semirotameric_tables(
-                all_libs, semi_libs, max_nchi_int
+                all_libs, semi_libs, int(ri2ti.shape[1])
             )
 
         # Eagerly move to device so they're ready leaves for the pytree;
@@ -551,7 +547,7 @@ class DunbrackEnergyTerm(EnergyTerm):
     def _stack_semirotameric_tables(
         all_libs: Tuple[Any, ...],
         semi_libs: Tuple[Any, ...],
-        max_nchi: int,
+        n_rotbins: int,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Stack per-AA semirotameric tables + a mapping from all-AA index.
 
@@ -577,7 +573,7 @@ class DunbrackEnergyTerm(EnergyTerm):
             return (
                 np.zeros((0, 1, 1, 1, 1), dtype=np.float32),
                 np.full((n_aa,), -1, dtype=np.int32),
-                np.full((n_aa, max(1, 3 ** max_nchi)), -1, dtype=np.int32),
+                np.full((n_aa, max(1, n_rotbins)), -1, dtype=np.int32),
                 np.zeros((0, 3), dtype=np.float32),
                 np.zeros((0, 3), dtype=np.float32),
                 np.zeros((0, 3), dtype=np.float32),
@@ -594,7 +590,7 @@ class DunbrackEnergyTerm(EnergyTerm):
             (n_sr, max_nrot_sr, n_phi, n_psi, n_chi), dtype=np.float32
         )
         sr_index = np.full((n_aa,), -1, dtype=np.int32)
-        sr_ri2ti = np.full((n_aa, 3 ** max_nchi), -1, dtype=np.int32)
+        sr_ri2ti = np.full((n_aa, n_rotbins), -1, dtype=np.int32)
         sr_start = np.zeros((n_sr, 3), dtype=np.float32)
         sr_step = np.zeros((n_sr, 3), dtype=np.float32)
         sr_period = np.full((n_sr, 3), 2.0 * np.pi, dtype=np.float32)
