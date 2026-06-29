@@ -211,7 +211,6 @@ def canonical_form_from_biotite(
     else:
         all_coords = np.asarray(template.coord, dtype=np.float32)[np.newaxis, :]
     atom_names_arr = np.asarray(template.atom_name)
-    res_names_arr = np.asarray(template.res_name)
     chain_id_arr = np.asarray(template.chain_id)
     res_id_arr = np.asarray(template.res_id)
     ins_code_arr = np.asarray(getattr(template, "ins_code", np.array([""] * len(template))))

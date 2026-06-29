@@ -867,7 +867,6 @@ def _resolve_uaids_to_atom_indices(
         ``bool[P, B, D, 4]``.
     """
     P, B, D, _, _ = uaids.shape
-    C = inter_residue_connections.shape[2]
     del _  # unused
 
     atom_ids = uaids[..., 0]  # [P, B, D, 4]

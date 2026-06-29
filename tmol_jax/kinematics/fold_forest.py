@@ -45,7 +45,7 @@ Simplifications vs upstream
 from __future__ import annotations
 
 import enum
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Tuple
 
 import attrs
 import jax.numpy as jnp
@@ -854,7 +854,6 @@ class FoldForest:
                 whose first block is parented to ``parent_kfo`` via a jump
                 / root-jump."""
                 step = 1 if start <= end else -1
-                first = True
                 prev_up_kfo = parent_kfo
                 prev_dof = int(NodeType.jump)
                 for b in range(start, end + step, step):
@@ -871,7 +870,6 @@ class FoldForest:
                         break
                     prev_up_kfo = new_up
                     prev_dof = int(NodeType.bond)
-                    first = False
 
             for j in range(ne):
                 row = edges[p, j]

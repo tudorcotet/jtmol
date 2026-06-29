@@ -31,7 +31,6 @@ via :func:`jax.grad`.
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 
 from tmol_jax.numeric.bspline import bspline_interpolate

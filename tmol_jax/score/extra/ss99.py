@@ -45,7 +45,6 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, Float, Int

@@ -292,7 +292,6 @@ class PoseStackBuilder:
                 continue
 
             chain_p = chain_id_int[p, :nb_p]
-            res_num_p = np.asarray(res_num_per_pose[p], dtype=np.int64)
             bti_p = block_type_ind[p, :nb_p]
 
             # Scan consecutive block slots. If two real residues share a

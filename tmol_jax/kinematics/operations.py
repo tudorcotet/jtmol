@@ -691,8 +691,6 @@ def _inverse_kin_impl(
 
     Both passes are embarrassingly parallel across nodes, so we use ``vmap``.
     """
-    n = coords.shape[0]
-
     # --- Pass 1: build global HT for every atom ---
     # Gather frame-atom positions. Invalid frame indices on the root node
     # still produce finite numbers because we overwrite HTs[0] with identity

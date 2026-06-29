@@ -579,7 +579,7 @@ def _fill_missing_from_icoors(
     Returns ``(new_coords, newly_filled_mask)``. Atoms whose ancestors
     can't be fully resolved are left unchanged.
     """
-    from tmol_jax.chemical.ideal_coords import frame_from_coords, rot_x, rot_z, trans_z, eye4
+    from tmol_jax.chemical.ideal_coords import frame_from_coords, rot_x, rot_z, trans_z
 
     filled = actual.copy()
     n_bt = filled.shape[0]

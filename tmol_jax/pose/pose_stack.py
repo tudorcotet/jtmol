@@ -42,7 +42,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tmol_jax.types import as_jnp, as_np, pytree_dataclass
+from tmol_jax.types import as_jnp, pytree_dataclass
 
 
 def block_coord_offset_from_counts(

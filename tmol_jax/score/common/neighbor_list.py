@@ -308,13 +308,10 @@ def gather_neighbor_values(values: jax.Array, nbr_idx: jax.Array) -> jax.Array:
     two-line operation; for 3-vector coords we reshape the index once.
     """
     v = jnp.asarray(values)
-    P, N = v.shape[0], v.shape[1]
-    max_nbr = nbr_idx.shape[-1]
 
     if v.ndim == 2:
         # [P, N] -> [P, N, max_nbr]
-        return jnp.take_along_axis(v[:, :, None], nbr_idx[:, :, :], axis=1)[..., 0] \
-            if False else _take_2d(v, nbr_idx)
+        return _take_2d(v, nbr_idx)
     if v.ndim == 3:
         # [P, N, D] -> [P, N, max_nbr, D]
         return _take_3d(v, nbr_idx)

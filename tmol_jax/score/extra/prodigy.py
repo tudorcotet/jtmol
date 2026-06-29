@@ -118,8 +118,6 @@ def prodigy_contact_counts(
     -------
     {"cc_cc", "cc_ap", "po_po", "po_ap"} → scalar smooth counts.
     """
-    n_atoms = coords.shape[0]
-
     # Per-atom chain id and polarity class.
     atom_chain = chain_id_per_res[atom_to_res]
     atom_pol = res_polarity[atom_to_res]

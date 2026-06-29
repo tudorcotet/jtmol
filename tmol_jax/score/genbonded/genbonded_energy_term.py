@@ -488,7 +488,6 @@ class GenBondedEnergyTerm(EnergyTerm):
         coords_override: Optional[jax.Array] = None,
     ) -> Dict[ScoreType, jax.Array]:
         coords = pose_stack.coords if coords_override is None else coords_override
-        n_poses = coords.shape[0]
 
         def _gather_xyz(global_atoms: jax.Array) -> jax.Array:
             safe = jnp.where(global_atoms >= 0, global_atoms, 0)

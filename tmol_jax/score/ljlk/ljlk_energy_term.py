@@ -28,10 +28,7 @@ import numpy as np
 from functools import partial as _partial
 
 from tmol_jax.score.common.count_pair import (
-    get_pose_atom_index,
     pairwise_bonded_path_length,
-    pose_atom_real_mask,
-    scatter_many_per_atom,
     scatter_per_atom,
 )
 

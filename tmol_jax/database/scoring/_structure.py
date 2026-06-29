@@ -123,7 +123,6 @@ def structure(value: Any, target_type: Any) -> Any:
 
     # Dicts ---------------------------------------------------------------
     if origin is dict:
-        _key_t = args[0] if len(args) >= 1 else str
         val_t = args[1] if len(args) >= 2 else Any
         return {k: structure(v, val_t) for k, v in value.items()}
 

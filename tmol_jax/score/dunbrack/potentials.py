@@ -39,7 +39,6 @@ correct rotamer/amino acid; the energy term above does the dispatch.
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 
 from tmol_jax.types import Array

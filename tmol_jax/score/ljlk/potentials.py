@@ -232,7 +232,6 @@ def lj_atr_rep(
     above_cutoff = dist > cpoly_dmax
     in_fade = (dist > cpoly_dmin) & (~above_cutoff)
     in_vdw = (dist > d_lin) & (~in_fade) & (~above_cutoff)
-    in_lin = (~above_cutoff) & (~in_fade) & (~in_vdw)
 
     # --- fade branch ---------------------------------------------------
     # Evaluate vdw at cpoly_dmin for every pair (may produce garbage in
