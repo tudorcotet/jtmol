@@ -1279,60 +1279,37 @@ class CartBondedEnergyTerm(EnergyTerm):
         a_E = jnp.where(term_state.angle_mask, a_E, 0.0)
         cart_angles = jnp.sum(a_E, axis=(1, 2))
 
-        # Proper torsions ------------------------------------------- #
-        ta = term_state.torsion_atoms  # [P, B, T, 4]
-        txyz = _gather_xyz(ta)
-        t_phi = dihedral_angle(
-            txyz[..., 0, :], txyz[..., 1, :], txyz[..., 2, :], txyz[..., 3, :]
-        )
-        # Params: (k1, k2, k3, phi1, phi2, phi3) — sum of three cosines
-        # with periodicities 1, 2, 3. We reuse hxltorsion_E which has
-        # exactly that form (no 0.5 prefactor), matching the upstream
-        # ``cbtorsion_V_dV`` helper.
-        t_k1 = term_state.torsion_params[..., 0]
-        t_k2 = term_state.torsion_params[..., 1]
-        t_k3 = term_state.torsion_params[..., 2]
-        t_phi1 = term_state.torsion_params[..., 3]
-        t_phi2 = term_state.torsion_params[..., 4]
-        t_phi3 = term_state.torsion_params[..., 5]
-        t_E = hxltorsion_E(t_phi, t_k1, t_k2, t_k3, t_phi1, t_phi2, t_phi3)
-        t_E = jnp.where(term_state.torsion_mask, t_E, 0.0)
-        cart_torsions = jnp.sum(t_E, axis=(1, 2))
+        # Sum-of-three-cosines torsion: ``hxltorsion_E`` form is shared by
+        # proper torsions, impropers, hxl torsions, and inter-residue
+        # torsions in upstream ``cbtorsion_V_dV``; only the score-type
+        # bucket differs.
+        def _cos3_score(atoms_field, params_field, mask_field):
+            xyz = _gather_xyz(atoms_field)
+            phi = dihedral_angle(
+                xyz[..., 0, :], xyz[..., 1, :], xyz[..., 2, :], xyz[..., 3, :]
+            )
+            E = hxltorsion_E(
+                phi,
+                params_field[..., 0], params_field[..., 1], params_field[..., 2],
+                params_field[..., 3], params_field[..., 4], params_field[..., 5],
+            )
+            return jnp.sum(jnp.where(mask_field, E, 0.0), axis=(1, 2))
 
-        # Impropers (sum of three cosines) -------------------------- #
-        # Upstream ``cbtorsion_V_dV`` (potentials.hh) uses the same
-        # sum-of-three-cosines form for proper torsions, impropers, and
-        # hxl torsions; only the score-type bucket differs.
-        ia = term_state.improper_atoms  # [P, B, I, 4]
-        ixyz = _gather_xyz(ia)
-        i_phi = dihedral_angle(
-            ixyz[..., 0, :], ixyz[..., 1, :], ixyz[..., 2, :], ixyz[..., 3, :]
+        cart_torsions = _cos3_score(
+            term_state.torsion_atoms,
+            term_state.torsion_params,
+            term_state.torsion_mask,
         )
-        i_k1 = term_state.improper_params[..., 0]
-        i_k2 = term_state.improper_params[..., 1]
-        i_k3 = term_state.improper_params[..., 2]
-        i_phi1 = term_state.improper_params[..., 3]
-        i_phi2 = term_state.improper_params[..., 4]
-        i_phi3 = term_state.improper_params[..., 5]
-        i_E = hxltorsion_E(i_phi, i_k1, i_k2, i_k3, i_phi1, i_phi2, i_phi3)
-        i_E = jnp.where(term_state.improper_mask, i_E, 0.0)
-        cart_impropers = jnp.sum(i_E, axis=(1, 2))
-
-        # Hydroxyl torsions ----------------------------------------- #
-        ha = term_state.hxltorsion_atoms  # [P, B, H, 4]
-        hxyz = _gather_xyz(ha)
-        h_phi = dihedral_angle(
-            hxyz[..., 0, :], hxyz[..., 1, :], hxyz[..., 2, :], hxyz[..., 3, :]
+        cart_impropers = _cos3_score(
+            term_state.improper_atoms,
+            term_state.improper_params,
+            term_state.improper_mask,
         )
-        h_k1 = term_state.hxltorsion_params[..., 0]
-        h_k2 = term_state.hxltorsion_params[..., 1]
-        h_k3 = term_state.hxltorsion_params[..., 2]
-        h_phi1 = term_state.hxltorsion_params[..., 3]
-        h_phi2 = term_state.hxltorsion_params[..., 4]
-        h_phi3 = term_state.hxltorsion_params[..., 5]
-        h_E = hxltorsion_E(h_phi, h_k1, h_k2, h_k3, h_phi1, h_phi2, h_phi3)
-        h_E = jnp.where(term_state.hxltorsion_mask, h_E, 0.0)
-        cart_hxltorsions = jnp.sum(h_E, axis=(1, 2))
+        cart_hxltorsions = _cos3_score(
+            term_state.hxltorsion_atoms,
+            term_state.hxltorsion_params,
+            term_state.hxltorsion_mask,
+        )
 
         # ---------- Inter-residue contributions --------------------- #
         # Inter-residue arrays are stored as ``[P, E, k]`` (one entry
@@ -1379,14 +1356,11 @@ class CartBondedEnergyTerm(EnergyTerm):
                 itxyz[..., 0, :], itxyz[..., 1, :],
                 itxyz[..., 2, :], itxyz[..., 3, :],
             )
-            it_k1 = term_state.inter_torsion_params[..., 0]
-            it_k2 = term_state.inter_torsion_params[..., 1]
-            it_k3 = term_state.inter_torsion_params[..., 2]
-            it_phi1 = term_state.inter_torsion_params[..., 3]
-            it_phi2 = term_state.inter_torsion_params[..., 4]
-            it_phi3 = term_state.inter_torsion_params[..., 5]
+            itp = term_state.inter_torsion_params
             it_E = hxltorsion_E(
-                it_phi, it_k1, it_k2, it_k3, it_phi1, it_phi2, it_phi3
+                it_phi,
+                itp[..., 0], itp[..., 1], itp[..., 2],
+                itp[..., 3], itp[..., 4], itp[..., 5],
             )
             it_E = jnp.where(term_state.inter_torsion_mask, it_E, 0.0)
             cart_torsions = cart_torsions + jnp.sum(it_E, axis=1)
