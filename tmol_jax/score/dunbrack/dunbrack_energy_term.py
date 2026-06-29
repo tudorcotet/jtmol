@@ -353,34 +353,16 @@ class DunbrackEnergyTerm(EnergyTerm):
                 if uaids is None:
                     continue
                 for a_ind in range(4):
-                    u = uaids[a_ind]
-                    dih_uaids_np[bt_ind, d_ind, a_ind, 0] = int(u[0])
-                    dih_uaids_np[bt_ind, d_ind, a_ind, 1] = int(u[1])
-                    dih_uaids_np[bt_ind, d_ind, a_ind, 2] = int(u[2])
+                    dih_uaids_np[bt_ind, d_ind, a_ind, :] = uaids[a_ind][:3]
 
-        setattr(
-            pbt,
-            "dunbrack_dihedral_uaids",
-            jnp.asarray(dih_uaids_np, dtype=jnp.int32),
-        )
-        setattr(
-            pbt, "dunbrack_aa_table_ind", jnp.asarray(aa_table_ind, dtype=jnp.int32)
-        )
-        setattr(
-            pbt,
-            "dunbrack_n_chi_per_type",
-            jnp.asarray(n_chi_per_type, dtype=jnp.int32),
-        )
-        setattr(
-            pbt,
-            "dunbrack_n_rotameric_chi",
-            jnp.asarray(n_rot_chi_per_type, dtype=jnp.int32),
-        )
-        setattr(
-            pbt,
-            "dunbrack_is_semirotameric",
-            jnp.asarray(is_sr_per_type, dtype=bool),
-        )
+        for attr, arr, dtype in (
+            ("dunbrack_dihedral_uaids", dih_uaids_np, jnp.int32),
+            ("dunbrack_aa_table_ind", aa_table_ind, jnp.int32),
+            ("dunbrack_n_chi_per_type", n_chi_per_type, jnp.int32),
+            ("dunbrack_n_rotameric_chi", n_rot_chi_per_type, jnp.int32),
+            ("dunbrack_is_semirotameric", is_sr_per_type, bool),
+        ):
+            setattr(pbt, attr, jnp.asarray(arr, dtype=dtype))
 
     def setup_for_pose_stack(
         self, pose_stack: Any, pbt: Any = None
