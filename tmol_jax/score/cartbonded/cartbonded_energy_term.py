@@ -1140,19 +1140,18 @@ class CartBondedEnergyTerm(EnergyTerm):
         def _gather_xyz(global_atoms: jax.Array) -> jax.Array:
             """Gather coords by (pose, global_atom) indices.
 
-            ``global_atoms`` has shape ``[P, B, K, k]`` with ``-1``
-            sentinels in padding slots. We clamp the sentinel to 0 for
-            the gather (the results are masked out downstream) and use
+            ``global_atoms`` has any leading shape ``[P, ..., k]`` with
+            ``-1`` sentinels in padding slots. We clamp the sentinel to
+            0 for the gather (results are masked out downstream) and use
             ``jnp.take_along_axis`` along the per-pose atom axis.
+            Returns ``[*orig_shape, 3]``.
             """
             safe = jnp.where(global_atoms >= 0, global_atoms, 0)
-            # shape [P, B, K, k] -> flatten B*K*k for a single take per pose
-            P, B, K, k = safe.shape
-            flat = safe.reshape(P, B * K * k)  # int32[P, M]
-            # coords: [P, A, 3]; gather along A.
+            orig_shape = safe.shape
+            flat = safe.reshape(orig_shape[0], -1)  # [P, M]
             idx = flat[:, :, None].repeat(3, axis=-1)  # [P, M, 3]
             gathered = jnp.take_along_axis(coords, idx, axis=1)  # [P, M, 3]
-            return gathered.reshape(P, B, K, k, 3)
+            return gathered.reshape(*orig_shape, 3)
 
         # Lengths --------------------------------------------------- #
         la = term_state.length_atoms  # [P, B, L, 2]
@@ -1211,20 +1210,13 @@ class CartBondedEnergyTerm(EnergyTerm):
         # ---------- Inter-residue contributions --------------------- #
         # Inter-residue arrays are stored as ``[P, E, k]`` (one entry
         # per pose per connection-spanning subgraph) rather than
-        # ``[P, B, K, k]``. We gather coords with a 3D-flavoured
-        # ``jnp.take_along_axis`` and reduce over the E axis.
-        def _gather_xyz_3d(global_atoms: jax.Array) -> jax.Array:
-            safe = jnp.where(global_atoms >= 0, global_atoms, 0)
-            P, E, k = safe.shape
-            flat = safe.reshape(P, E * k)
-            idx = flat[:, :, None].repeat(3, axis=-1)
-            gathered = jnp.take_along_axis(coords, idx, axis=1)
-            return gathered.reshape(P, E, k, 3)
+        # ``[P, B, K, k]``. ``_gather_xyz`` handles both shapes; the
+        # output here is ``[P, E, k, 3]`` and we reduce over E.
 
         # Inter-residue bond lengths ------------------------------- #
         ila = term_state.inter_length_atoms  # [P, E, 2]
         if ila.shape[1] > 0:
-            ilxyz = _gather_xyz_3d(ila)  # [P, E, 2, 3]
+            ilxyz = _gather_xyz(ila)  # [P, E, 2, 3]
             il_d0 = term_state.inter_length_params[..., 0]
             il_K = term_state.inter_length_params[..., 1]
             il_d = distance(ilxyz[..., 0, :], ilxyz[..., 1, :])
@@ -1235,7 +1227,7 @@ class CartBondedEnergyTerm(EnergyTerm):
         # Inter-residue bond angles -------------------------------- #
         iaa = term_state.inter_angle_atoms  # [P, E, 3]
         if iaa.shape[1] > 0:
-            iaxyz = _gather_xyz_3d(iaa)
+            iaxyz = _gather_xyz(iaa)
             ia_x0 = term_state.inter_angle_params[..., 0]
             ia_K = term_state.inter_angle_params[..., 1]
             ia_theta = pt_interior_angle(
@@ -1248,7 +1240,7 @@ class CartBondedEnergyTerm(EnergyTerm):
         # Inter-residue proper torsions ---------------------------- #
         ita = term_state.inter_torsion_atoms  # [P, E, 4]
         if ita.shape[1] > 0:
-            itxyz = _gather_xyz_3d(ita)
+            itxyz = _gather_xyz(ita)
             it_phi = dihedral_angle(
                 itxyz[..., 0, :], itxyz[..., 1, :],
                 itxyz[..., 2, :], itxyz[..., 3, :],
