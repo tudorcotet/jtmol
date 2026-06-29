@@ -144,13 +144,15 @@ def pmap_batched_energy(
     if state is None:
         state = sfxn.setup_for_pose_stack(pose_stack)
 
-    rep_state = jax.device_put_replicated(state, jax.devices())
-
-    def per_device(rep_st: Any, coords_chunk: jax.Array) -> jax.Array:
+    def per_device(coords_chunk: jax.Array) -> jax.Array:
+        # ``state`` and ``pose_stack`` are captured from the closure; pmap
+        # broadcasts them across devices. Earlier JAX exposed
+        # ``device_put_replicated`` for explicit replication but that API
+        # was deprecated in 0.6.x in favor of the sharding-based path.
         def single(coords: jax.Array) -> jax.Array:
             if score_dtype is not None:
                 coords = coords.astype(score_dtype)
-            per_pose = sfxn(pose_stack, state=rep_st, coords_override=coords)
+            per_pose = sfxn(pose_stack, state=state, coords_override=coords)
             return per_pose.astype(jnp.float64).sum()
         return jax.lax.map(single, coords_chunk, batch_size=chunk_size)
 
@@ -161,7 +163,7 @@ def pmap_batched_energy(
         if K % n_dev != 0:
             raise ValueError(f"K={K} not divisible by n_devices={n_dev}")
         reshaped = coords_batch.reshape((n_dev, K // n_dev) + coords_batch.shape[1:])
-        out = pmapped(rep_state, reshaped)
+        out = pmapped(reshaped)
         return out.reshape(-1)
 
     return fn

@@ -97,10 +97,13 @@ def bench_one_pose(pdb_label: str = "1ubq") -> dict:
         out["n_atoms"] = n_atoms
         print(f"n_atoms={n_atoms}", flush=True)
 
-        # Enable LJLK's cell-list path. Cuts the dense [P, N, N] LJ/LK
-        # pair tensor down to [P, N, max_nbr] (~50 at 6 Å), zero parity
-        # drift on 1ubq (verified on CPU).
-        sfxn = beta2016_score_function(use_neighbor_list=True)
+        # NL is opt-in via beta2016_score_function(use_neighbor_list=True).
+        # Disabled in the bench: it currently OOMs on GPU when combined with
+        # lax.map chunking (the lax.map carry inflates intermediate state of
+        # the NL pair gather). Standalone NL on CPU is fine (panel snapshot
+        # passes, zero parity drift). Tracked separately; lax.map alone
+        # already solved the dense-path OOM at K=1024.
+        sfxn = beta2016_score_function()
         state = sfxn.setup_for_pose_stack(jpose)
         base = jnp.asarray(jpose.coords)
 
