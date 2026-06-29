@@ -8,8 +8,6 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
-from tmol_jax._compat import check_install, print_install_status
-
 
 def _lazy(name: str):
     """Resolve a top-level re-export lazily so a single broken submodule
