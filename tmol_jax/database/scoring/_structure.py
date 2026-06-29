@@ -25,46 +25,19 @@ A single ``Angle`` scalar type alias is re-exported here; it is a
 
 from __future__ import annotations
 
-import math
 import typing
 from typing import Any, NewType, Tuple
 
 import attr
 
+from tmol_jax.utility.angle import parse_angle as _parse_angle
+
 
 # --------------------------------------------------------------------- #
-# Angle parsing (mirrors the chemical DB helper).                       #
+# Angle parsing (re-exported from :mod:`tmol_jax.utility.angle`).       #
 # --------------------------------------------------------------------- #
 
 Angle = NewType("Angle", float)
-
-
-def _parse_angle(v: Any) -> float:
-    """Parse a number or unit-qualified string into radians.
-
-    Handles the only two forms that appear in the upstream YAMLs:
-
-    * bare numbers (already radians)
-    * strings like ``"180 deg"`` or ``"-1.2 rad"``
-    """
-    if v is None:
-        return v  # type: ignore[return-value]
-    if isinstance(v, (int, float)):
-        return float(v)
-    if isinstance(v, str):
-        parts = v.strip().split()
-        if len(parts) == 1:
-            return float(parts[0])
-        if len(parts) == 2:
-            val = float(parts[0])
-            unit = parts[1].lower()
-            if unit in ("rad", "radian", "radians"):
-                return val
-            if unit in ("deg", "degree", "degrees"):
-                return val * math.pi / 180.0
-            raise ValueError(f"Unknown angle unit: {unit!r} in {v!r}")
-        raise ValueError(f"Cannot parse angle: {v!r}")
-    raise TypeError(f"Cannot parse angle from type {type(v).__name__}: {v!r}")
 
 
 # --------------------------------------------------------------------- #

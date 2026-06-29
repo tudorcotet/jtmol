@@ -21,7 +21,6 @@ Key differences from upstream:
 
 from __future__ import annotations
 
-import math
 import os
 import typing
 from typing import Any, NewType, Optional, Tuple
@@ -29,45 +28,21 @@ from typing import Any, NewType, Optional, Tuple
 import attr
 import yaml
 
+from tmol_jax.utility.angle import parse_angle as _parse_angle
+
 
 # --------------------------------------------------------------------- #
 # Angle parsing                                                          #
 # --------------------------------------------------------------------- #
 #
-# Upstream tmol used pint for unit-aware angle parsing; we don't need
-# pint for anything else, so we implement a minimal parser that handles
-# the forms that show up in chemical.yaml: bare numbers (already radians)
-# and strings like ``"180 deg"`` / ``"-1.2 rad"``.
+# Angle string parsing (``"180 deg"`` / ``"-1.2 rad"`` / bare numbers in
+# radians) lives in :mod:`tmol_jax.utility.angle`; imported above.
 
 AcceptorHybridization = NewType("AcceptorHybridization", str)
 _ACCEPTOR_HYBRIDIZATIONS = {"sp2", "sp3", "ring"}
 
 BondAngle = NewType("BondAngle", float)
 DihedralAngle = NewType("DihedralAngle", float)
-
-
-def _parse_angle(v: Any) -> float:
-    """Parse a number or unit-qualified string into radians."""
-    if v is None:
-        return v  # type: ignore[return-value]
-    if isinstance(v, (int, float)):
-        return float(v)
-    if isinstance(v, str):
-        s = v.strip()
-        # Split into value and optional unit.
-        parts = s.split()
-        if len(parts) == 1:
-            return float(parts[0])
-        if len(parts) == 2:
-            val = float(parts[0])
-            unit = parts[1].lower()
-            if unit in ("rad", "radian", "radians"):
-                return val
-            if unit in ("deg", "degree", "degrees"):
-                return val * math.pi / 180.0
-            raise ValueError(f"Unknown angle unit: {unit!r} in {v!r}")
-        raise ValueError(f"Cannot parse angle: {v!r}")
-    raise TypeError(f"Cannot parse angle from type {type(v).__name__}: {v!r}")
 
 
 def _parse_acceptor_hybridization(v: Any) -> Optional[str]:
