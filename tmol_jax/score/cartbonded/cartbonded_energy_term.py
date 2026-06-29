@@ -1057,21 +1057,18 @@ class CartBondedEnergyTerm(EnergyTerm):
         # Walk each pose's connections, resolve partner blocks, emit
         # one packed list per (category) per pose. Only emit entries
         # where ``block_i < block_j`` to avoid double-counting.
-        inter_L_atoms_per_pose: List[List[Tuple[int, int]]] = []
-        inter_L_params_per_pose: List[List[Tuple[float, float]]] = []
-        inter_A_atoms_per_pose: List[List[Tuple[int, int, int]]] = []
-        inter_A_params_per_pose: List[List[Tuple[float, float]]] = []
-        inter_T_atoms_per_pose: List[List[Tuple[int, int, int, int]]] = []
-        inter_T_params_per_pose: List[List[Tuple[float, ...]]] = []
+        # (category-key, by-pair-dict, atoms-arity, params-arity).
+        _INTER_CATS = (
+            ("L", inter_lengths_by_pair, 2, 2),
+            ("A", inter_angles_by_pair, 3, 2),
+            ("T", inter_torsions_by_pair, 4, 6),
+        )
+        per_pose: Dict[str, Tuple[List, List]] = {
+            cat: ([[] for _ in range(P)], [[] for _ in range(P)])
+            for cat, _, _, _ in _INTER_CATS
+        }
 
         for pose in range(P):
-            L_atoms: List[Tuple[int, int]] = []
-            L_params: List[Tuple[float, float]] = []
-            A_atoms: List[Tuple[int, int, int]] = []
-            A_params: List[Tuple[float, float]] = []
-            T_atoms: List[Tuple[int, int, int, int]] = []
-            T_params: List[Tuple[float, ...]] = []
-
             for block_i in range(B):
                 bt_i = int(block_type_ind[pose, block_i])
                 if bt_i < 0:
@@ -1080,10 +1077,8 @@ class CartBondedEnergyTerm(EnergyTerm):
                 for conn_i in range(n_conn_i):
                     block_j = int(irc[pose, block_i, conn_i, 0])
                     conn_j = int(irc[pose, block_i, conn_i, 1])
-                    if block_j < 0:
-                        continue
-                    # only handle each edge once
-                    if block_i >= block_j:
+                    if block_j < 0 or block_i >= block_j:
+                        # block_i >= block_j ensures each edge is emitted once.
                         continue
                     bt_j = int(block_type_ind[pose, block_j])
                     if bt_j < 0:
@@ -1091,60 +1086,35 @@ class CartBondedEnergyTerm(EnergyTerm):
 
                     off_i = int(block_coord_offset[pose, block_i])
                     off_j = int(block_coord_offset[pose, block_j])
-
                     pair_key = (bt_i, conn_i, bt_j, conn_j)
-                    # Skip pair keys that have no subgraphs at all — the
-                    # typical 1UBQ peptide bond hits one non-empty key and
-                    # ~N-1 empty ones, and the dict-get miss dominates
-                    # the loop cost.
-                    lengths_hit = inter_lengths_by_pair.get(pair_key)
-                    angles_hit = inter_angles_by_pair.get(pair_key)
-                    torsions_hit = inter_torsions_by_pair.get(pair_key)
-                    if not (lengths_hit or angles_hit or torsions_hit):
+
+                    # Skip pair keys with no subgraphs at all - the typical
+                    # 1UBQ peptide bond hits one non-empty key and ~N-1
+                    # empty ones, and the dict-get miss dominates loop cost.
+                    hits = [d.get(pair_key) for _, d, _, _ in _INTER_CATS]
+                    if not any(hits):
                         continue
 
-                    if lengths_hit:
-                        for atoms, is_on_B, params in lengths_hit:
+                    for (cat, _, _, _), hit in zip(_INTER_CATS, hits):
+                        if not hit:
+                            continue
+                        atoms_list, params_list = per_pose[cat]
+                        for atoms, is_on_B, params in hit:
                             g = tuple(
                                 (a + off_j) if b else (a + off_i)
                                 for a, b in zip(atoms, is_on_B)
                             )
-                            L_atoms.append(g)
-                            L_params.append(params)
-
-                    if angles_hit:
-                        for atoms, is_on_B, params in angles_hit:
-                            g = tuple(
-                                (a + off_j) if b else (a + off_i)
-                                for a, b in zip(atoms, is_on_B)
-                            )
-                            A_atoms.append(g)
-                            A_params.append(params)
-
-                    if torsions_hit:
-                        for atoms, is_on_B, params in torsions_hit:
-                            g = tuple(
-                                (a + off_j) if b else (a + off_i)
-                                for a, b in zip(atoms, is_on_B)
-                            )
-                            T_atoms.append(g)
-                            T_params.append(params)
-
-            inter_L_atoms_per_pose.append(L_atoms)
-            inter_L_params_per_pose.append(L_params)
-            inter_A_atoms_per_pose.append(A_atoms)
-            inter_A_params_per_pose.append(A_params)
-            inter_T_atoms_per_pose.append(T_atoms)
-            inter_T_params_per_pose.append(T_params)
+                            atoms_list[pose].append(g)
+                            params_list[pose].append(params)
 
         # ponytail: reuse module-level _pad_atoms / _pad_params; shape is
         # [P, max_len, k] either way since P == len(per_pose).
-        inter_L_atoms, inter_L_mask, _ = _pad_atoms(inter_L_atoms_per_pose, 2)
-        inter_L_params = _pad_params(inter_L_params_per_pose, 2)
-        inter_A_atoms, inter_A_mask, _ = _pad_atoms(inter_A_atoms_per_pose, 3)
-        inter_A_params = _pad_params(inter_A_params_per_pose, 2)
-        inter_T_atoms, inter_T_mask, _ = _pad_atoms(inter_T_atoms_per_pose, 4)
-        inter_T_params = _pad_params(inter_T_params_per_pose, 6)
+        inter_L_atoms, inter_L_mask, _ = _pad_atoms(per_pose["L"][0], 2)
+        inter_L_params = _pad_params(per_pose["L"][1], 2)
+        inter_A_atoms, inter_A_mask, _ = _pad_atoms(per_pose["A"][0], 3)
+        inter_A_params = _pad_params(per_pose["A"][1], 2)
+        inter_T_atoms, inter_T_mask, _ = _pad_atoms(per_pose["T"][0], 4)
+        inter_T_params = _pad_params(per_pose["T"][1], 6)
 
         # Mask out inter-residue subgraphs that reference a "phantom"
         # atom (coord exactly zero or non-finite), mirroring the intra-
