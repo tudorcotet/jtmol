@@ -1176,36 +1176,14 @@ class CartBondedEnergyTerm(EnergyTerm):
             inter_T_atoms_per_pose.append(T_atoms)
             inter_T_params_per_pose.append(T_params)
 
-        def _pad_per_pose(
-            per_pose: List[List[Tuple[int, ...]]], k: int
-        ) -> Tuple[np.ndarray, np.ndarray]:
-            max_len = max((len(x) for x in per_pose), default=0)
-            max_len = max(max_len, 1)
-            atoms = np.full((P, max_len, k), -1, dtype=np.int32)
-            mask = np.zeros((P, max_len), dtype=bool)
-            for p, entries in enumerate(per_pose):
-                for j, e in enumerate(entries):
-                    atoms[p, j, :] = e
-                    mask[p, j] = True
-            return atoms, mask
-
-        def _pad_params_per_pose(
-            per_pose: List[List[Tuple[float, ...]]], k: int
-        ) -> np.ndarray:
-            max_len = max((len(x) for x in per_pose), default=0)
-            max_len = max(max_len, 1)
-            params = np.zeros((P, max_len, k), dtype=np.float32)
-            for p, entries in enumerate(per_pose):
-                for j, e in enumerate(entries):
-                    params[p, j, :] = e
-            return params
-
-        inter_L_atoms, inter_L_mask = _pad_per_pose(inter_L_atoms_per_pose, 2)
-        inter_L_params = _pad_params_per_pose(inter_L_params_per_pose, 2)
-        inter_A_atoms, inter_A_mask = _pad_per_pose(inter_A_atoms_per_pose, 3)
-        inter_A_params = _pad_params_per_pose(inter_A_params_per_pose, 2)
-        inter_T_atoms, inter_T_mask = _pad_per_pose(inter_T_atoms_per_pose, 4)
-        inter_T_params = _pad_params_per_pose(inter_T_params_per_pose, 6)
+        # ponytail: reuse module-level _pad_atoms / _pad_params; shape is
+        # [P, max_len, k] either way since P == len(per_pose).
+        inter_L_atoms, inter_L_mask, _ = _pad_atoms(inter_L_atoms_per_pose, 2)
+        inter_L_params = _pad_params(inter_L_params_per_pose, 2)
+        inter_A_atoms, inter_A_mask, _ = _pad_atoms(inter_A_atoms_per_pose, 3)
+        inter_A_params = _pad_params(inter_A_params_per_pose, 2)
+        inter_T_atoms, inter_T_mask, _ = _pad_atoms(inter_T_atoms_per_pose, 4)
+        inter_T_params = _pad_params(inter_T_params_per_pose, 6)
 
         # Mask out inter-residue subgraphs that reference a "phantom"
         # atom (coord exactly zero or non-finite), mirroring the intra-
