@@ -180,24 +180,6 @@ def _bspline3_coeffs_1d(line):  # numpy in/out, used at setup time
     return line.astype(np.float32)
 
 
-def _bspline3_compute_coeffs_nd(values):
-    """Apply the 1-D B-spline filter along every axis of ``values``.
-
-    ``values`` is a numpy array of sample values (any leading
-    stack-dimensions, then the N interpolation dimensions). We assume all
-    axes are interpolation axes; caller slices out any leading stack axes
-    before/after calling this function. Returns a new numpy array of the
-    same shape holding B-spline coefficients.
-    """
-    import numpy as np
-
-    arr = np.asarray(values, dtype=np.float64).copy()
-    ndim = arr.ndim
-    for ax in range(ndim):
-        arr = np.apply_along_axis(_bspline3_coeffs_1d, ax, arr)
-    return arr.astype(np.float32)
-
-
 def bspline3_coeffs_for_2d_table(values):
     """Compute bicubic B-spline coefficients for one 2-D table.
 
@@ -207,15 +189,14 @@ def bspline3_coeffs_for_2d_table(values):
     """
     import numpy as np
 
-    vals = np.asarray(values, dtype=np.float32)
-    if vals.ndim < 2:
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.ndim < 2:
         raise ValueError("Need at least 2 dims for bicubic coeffs")
-    lead_shape = vals.shape[:-2]
-    flat = vals.reshape(-1, vals.shape[-2], vals.shape[-1])
-    out = np.empty_like(flat)
-    for i in range(flat.shape[0]):
-        out[i] = _bspline3_compute_coeffs_nd(flat[i])
-    return out.reshape(lead_shape + (vals.shape[-2], vals.shape[-1]))
+    # ponytail: np.apply_along_axis handles leading stack dims natively;
+    # filtering only the (phi, psi) axes matches the per-slice 2-D pass.
+    for ax in (-2, -1):
+        arr = np.apply_along_axis(_bspline3_coeffs_1d, ax, arr)
+    return arr.astype(np.float32)
 
 
 def _bspline3_weights(f):
