@@ -34,7 +34,6 @@ safety.
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 
 from tmol_jax.score.common.count_pair import connectivity_weight

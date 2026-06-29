@@ -45,7 +45,7 @@ Simplifications vs upstream
 from __future__ import annotations
 
 import enum
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Tuple
 
 import attrs
 import jax.numpy as jnp
