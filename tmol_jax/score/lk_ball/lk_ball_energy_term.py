@@ -114,7 +114,6 @@ def _lkball_pose_palette_jit(
     is_hxl_table: jax.Array,
     is_ph_table: jax.Array,
     is_hydrogen_table: jax.Array,
-    nbr_table: jax.Array,
     B_local_table: jax.Array,
     B0_local_table: jax.Array,
     acc_hyb_table: jax.Array,
@@ -164,13 +163,6 @@ def _lkball_pose_palette_jit(
     heavy = jnp.logical_not(is_hydrogen)
     is_polar = jnp.logical_and(heavy, jnp.logical_or(is_donor, is_acc))
 
-    # Neighbour list scatter.
-    local_nbrs = nbr_table[bti_of_atom, local_for_atom]  # [P, N, K]
-    valid_nbr = local_nbrs >= 0
-    nbr_idx_pose = block_offset[:, :, None] + jnp.where(valid_nbr, local_nbrs, 0)
-    keep = valid_nbr & atom_is_real[:, :, None]
-    nbr_idx_pose = jnp.where(keep, nbr_idx_pose, -1)
-
     # Acceptor bases + donor Hs.
     B_loc = B_local_table[bti_of_atom, local_for_atom]
     B0_loc = B0_local_table[bti_of_atom, local_for_atom]
@@ -204,8 +196,6 @@ def _lkball_pose_palette_jit(
         is_polar,
         heavy,
         atom_is_real,
-        nbr_idx_pose,
-        keep,
         B_idx.astype(jnp.int32),
         B0_idx.astype(jnp.int32),
         acc_hyb_out.astype(jnp.int32),
@@ -253,12 +243,6 @@ class LKBallTermState:
     is_occluder: jax.Array
     # Atom realness mask (for padding).
     is_real: jax.Array
-
-    # Indices of up to ``max_n_neighbors`` bonded neighbors per atom,
-    # shape [n_poses, max_n_atoms_per_pose, max_n_neighbors].
-    neighbor_idx: jax.Array
-    # Bool mask for the above (True = valid neighbor).
-    neighbor_mask: jax.Array
 
     # ---- Upstream-faithful water-placement metadata --------------------- #
     # Per-polar-atom acceptor base (B) and base-of-base (B0) atom indices
@@ -387,12 +371,6 @@ class LKBallEnergyTerm(EnergyTerm):
         shape = (n_poses, max_n_atoms_per_pose)
         zero_f = jnp.zeros(shape, dtype=jnp.float32)
         zero_b = jnp.zeros(shape, dtype=jnp.bool_)
-        zero_nbr = jnp.full(
-            (n_poses, max_n_atoms_per_pose, self.max_n_neighbors),
-            -1,
-            dtype=jnp.int32,
-        )
-        zero_nbr_mask = jnp.zeros_like(zero_nbr, dtype=jnp.bool_)
         zero_H = jnp.full(
             (n_poses, max_n_atoms_per_pose, self.max_H_per_donor),
             -1,
@@ -423,8 +401,6 @@ class LKBallEnergyTerm(EnergyTerm):
                 is_polar_2d,
                 is_occluder_2d,
                 is_real_2d,
-                neighbor_idx_2d,
-                neighbor_mask_2d,
                 B_idx_2d,
                 B0_idx_2d,
                 acc_hyb_2d,
@@ -454,8 +430,6 @@ class LKBallEnergyTerm(EnergyTerm):
             is_polar_2d = zero_b
             is_occluder_2d = zero_b
             is_real_2d = zero_b
-            neighbor_idx_2d = zero_nbr
-            neighbor_mask_2d = zero_nbr_mask
             B_idx_2d = jnp.full(shape, -1, dtype=jnp.int32)
             B0_idx_2d = jnp.full(shape, -1, dtype=jnp.int32)
             acc_hyb_2d = zero_i
@@ -481,8 +455,6 @@ class LKBallEnergyTerm(EnergyTerm):
             is_polar=is_polar_2d,
             is_occluder=is_occluder_2d,
             is_real=is_real_2d,
-            neighbor_idx=neighbor_idx_2d,
-            neighbor_mask=neighbor_mask_2d,
             B_idx=B_idx_2d,
             B0_idx=B0_idx_2d,
             acc_hybridization=acc_hyb_2d,
@@ -582,8 +554,6 @@ class LKBallEnergyTerm(EnergyTerm):
             "is_polar": state.is_polar,
             "is_occluder": state.is_occluder,
             "is_real": state.is_real,
-            "neighbor_idx": state.neighbor_idx,
-            "neighbor_mask": state.neighbor_mask,
             "B_idx": state.B_idx,
             "B0_idx": state.B0_idx,
             "acc_hybridization": state.acc_hybridization,
@@ -727,7 +697,7 @@ class LKBallEnergyTerm(EnergyTerm):
         After this call ``pbt`` exposes four per-(BT, atom) float32 tables
         (``lkball_bt_lj_radius``, ``lkball_bt_lk_dgfree``,
         ``lkball_bt_lk_lambda``, ``lkball_bt_lk_volume``) ready for the
-        pure-JAX scatter in :meth:`_per_atom_ljlk_params`.
+        pure-JAX scatter in :func:`_lkball_pose_palette_jit`.
         """
         if hasattr(pbt, "lkball_bt_lj_radius"):
             return
@@ -776,34 +746,6 @@ class LKBallEnergyTerm(EnergyTerm):
         setattr(pbt, "lkball_bt_lk_lambda", jnp.asarray(_gather(lk_lambda_table)))
         setattr(pbt, "lkball_bt_lk_volume", jnp.asarray(_gather(lk_volume_table)))
 
-    def _per_atom_ljlk_params(
-        self, pose_stack: Any, pbt: Any
-    ) -> Tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-        """Lj radius / dg-free / lambda / volume per (pose, atom).
-
-        Raises :class:`_LKBallSetupUnavailable` if the ljlk database is
-        not attached to ``self.param_db``. Uses palette-cached per-BT
-        tables (produced by :meth:`_annotate_pbt_ljlk_tables`) so every
-        per-pose setup is a handful of JAX scatters.
-        """
-        self._annotate_pbt_ljlk_tables(pbt)
-        from tmol_jax.score.common.count_pair import scatter_per_atom
-
-        bti = jnp.asarray(pose_stack.block_type_ind, dtype=jnp.int32)
-        offsets = jnp.asarray(pose_stack.block_coord_offset, dtype=jnp.int32)
-        n_atoms_per_type = jnp.asarray(pbt.n_atoms, dtype=jnp.int32)
-        A = int(pose_stack.max_n_atoms_per_pose)
-
-        def _s(table):
-            return scatter_per_atom(table, bti, offsets, n_atoms_per_type, A)
-
-        return (
-            _s(pbt.lkball_bt_lj_radius),
-            _s(pbt.lkball_bt_lk_dgfree),
-            _s(pbt.lkball_bt_lk_lambda),
-            _s(pbt.lkball_bt_lk_volume),
-        )
-
     def _annotate_pbt_polar_flags(self, pbt: Any) -> None:
         """Cache per-BT polar-flag tables on ``pbt`` once.
 
@@ -846,147 +788,6 @@ class LKBallEnergyTerm(EnergyTerm):
             "lkball_bt_is_hydrogen",
             jnp.asarray(is_hydrogen_per_block),
         )
-
-    def _per_atom_polar_flags(
-        self, pose_stack: Any, pbt: Any
-    ) -> Tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
-        """Per-atom donor/acceptor/hydroxyl/polarh/polar flags.
-
-        Pure-JAX scatter of the palette-cached bool flag tables from
-        :meth:`_annotate_pbt_polar_flags`.
-        """
-        self._annotate_pbt_polar_flags(pbt)
-        from tmol_jax.score.common.count_pair import scatter_per_atom
-
-        bti = jnp.asarray(pose_stack.block_type_ind, dtype=jnp.int32)
-        offsets = jnp.asarray(pose_stack.block_coord_offset, dtype=jnp.int32)
-        n_atoms_per_type = jnp.asarray(pbt.n_atoms, dtype=jnp.int32)
-        A = int(pose_stack.max_n_atoms_per_pose)
-
-        def _s(table):
-            return scatter_per_atom(
-                table, bti, offsets, n_atoms_per_type, A, default=False
-            )
-
-        is_donor = _s(pbt.lkball_bt_is_donor)
-        is_acc = _s(pbt.lkball_bt_is_acc)
-        is_hxl = _s(pbt.lkball_bt_is_hxl)
-        is_ph = _s(pbt.lkball_bt_is_ph)
-        is_hydrogen_pose = _s(pbt.lkball_bt_is_hydrogen)
-
-        heavy = jnp.logical_not(is_hydrogen_pose)
-        is_polar = jnp.logical_and(heavy, jnp.logical_or(is_donor, is_acc))
-
-        return is_donor, is_acc, is_hxl, is_ph, is_polar
-
-    def _per_atom_occluder(
-        self, pose_stack: Any, pbt: Any, is_polar: jax.Array
-    ) -> jax.Array:
-        """An atom occludes iff it is a heavy atom.
-
-        Reuses the cached ``lkball_bt_is_hydrogen`` table from
-        :meth:`_annotate_pbt_polar_flags`; pure-JAX scatter.
-        """
-        self._annotate_pbt_polar_flags(pbt)
-        from tmol_jax.score.common.count_pair import scatter_per_atom
-
-        bti = jnp.asarray(pose_stack.block_type_ind, dtype=jnp.int32)
-        offsets = jnp.asarray(pose_stack.block_coord_offset, dtype=jnp.int32)
-        n_atoms_per_type = jnp.asarray(pbt.n_atoms, dtype=jnp.int32)
-        A = int(pose_stack.max_n_atoms_per_pose)
-        is_hydrogen_pose = scatter_per_atom(
-            pbt.lkball_bt_is_hydrogen, bti, offsets, n_atoms_per_type, A, default=False
-        )
-        heavy = jnp.logical_not(is_hydrogen_pose)
-        return heavy
-
-    def _per_atom_is_real(self, pose_stack: Any, pbt: Any) -> jax.Array:
-        """Which slots in the pose coord layout correspond to real atoms.
-
-        Delegates to the shared
-        :func:`~tmol_jax.score.common.count_pair.pose_atom_real_mask` so
-        every term agrees on the definition and shares the jit trace.
-        """
-        from tmol_jax.score.common.count_pair import pose_atom_real_mask
-
-        bti = jnp.asarray(pose_stack.block_type_ind, dtype=jnp.int32)
-        offsets = jnp.asarray(pose_stack.block_coord_offset, dtype=jnp.int32)
-        n_atoms_per_type = jnp.asarray(pbt.n_atoms, dtype=jnp.int32)
-        A = int(pose_stack.max_n_atoms_per_pose)
-        return pose_atom_real_mask(bti, offsets, n_atoms_per_type, A)
-
-    def _per_atom_neighbors(
-        self, pose_stack: Any, pbt: Any, max_n_neighbors: int
-    ) -> Tuple[jax.Array, jax.Array]:
-        """Up to ``max_n_neighbors`` intra-residue bonded neighbors per atom.
-
-        Neighbors are expressed as *pose-level* atom indices. Inter-block
-        bonds are ignored in this simplified port — the common case of a
-        polar atom having at least one neighbor within its own block
-        covers all canonical amino acids.
-
-        The per-BT ``[n_types, max_atoms_block, max_n_neighbors]`` neighbor
-        table is a pure function of ``pbt.bond_indices`` / ``pbt.n_bonds``
-        and depends only on the palette. We cache it on ``pbt`` the first
-        time we see it, then scatter into the pose layout with a pure-JAX
-        gather (via the count_pair helpers) so the per-pose setup stays
-        on-device.
-        """
-        # Lazy import to avoid circular references at module load time.
-        from tmol_jax.score.common.count_pair import (
-            pose_atom_block_index,
-        )
-
-        cache_key = f"lkball_nbr_table_k{max_n_neighbors}"
-        nbr_table_j = getattr(pbt, cache_key, None)
-        if nbr_table_j is None:
-            n_types = int(pbt.n_types)
-            max_atoms_block = int(pbt.max_n_atoms)
-            bond_indices_np = np.asarray(pbt.bond_indices)
-            n_bonds_np = np.asarray(pbt.n_bonds)
-            nbr_table = np.full(
-                (n_types, max_atoms_block, max_n_neighbors), -1, dtype=np.int32
-            )
-            for bt in range(n_types):
-                filled = np.zeros(max_atoms_block, dtype=np.int32)
-                for e in range(int(n_bonds_np[bt])):
-                    a = int(bond_indices_np[bt, e, 0])
-                    b = int(bond_indices_np[bt, e, 1])
-                    if 0 <= a < max_atoms_block and filled[a] < max_n_neighbors:
-                        nbr_table[bt, a, filled[a]] = b
-                        filled[a] += 1
-                    if 0 <= b < max_atoms_block and filled[b] < max_n_neighbors:
-                        nbr_table[bt, b, filled[b]] = a
-                        filled[b] += 1
-            nbr_table_j = jnp.asarray(nbr_table, dtype=jnp.int32)
-            setattr(pbt, cache_key, nbr_table_j)
-
-        # Scatter into pose layout via a pure-JAX gather. For each (p, i)
-        # we need nbr_table[bti_of_atom[p, i], local_for_atom[p, i], k],
-        # then add the block_coord_offset for that atom's block. Padding
-        # slots (-1 in the palette table) stay -1.
-        bti = jnp.asarray(pose_stack.block_type_ind, dtype=jnp.int32)
-        offsets = jnp.asarray(pose_stack.block_coord_offset, dtype=jnp.int32)
-        n_atoms_per_type = jnp.asarray(pbt.n_atoms, dtype=jnp.int32)
-        A = int(pose_stack.max_n_atoms_per_pose)
-        block_for_atom, local_for_atom, atom_is_real = pose_atom_block_index(
-            bti, offsets, n_atoms_per_type, A
-        )
-        P = bti.shape[0]
-        safe_bti = jnp.where(bti >= 0, bti, 0)
-        bti_of_atom = safe_bti[jnp.arange(P)[:, None], block_for_atom]  # [P, N]
-
-        # Gather neighbor *local* indices: [P, N, K].
-        local_nbrs = nbr_table_j[bti_of_atom, local_for_atom]  # [P, N, K]
-        valid_nbr = local_nbrs >= 0
-        # Convert to pose-global indices: nbr_global = offset[p, b_for_atom] + local_nbr.
-        block_offset = offsets[jnp.arange(P)[:, None], block_for_atom]  # [P, N]
-        nbr_idx_pose = block_offset[:, :, None] + jnp.where(valid_nbr, local_nbrs, 0)
-        # Invalid slots (either the atom itself is padding, or the
-        # specific neighbour slot is empty) get -1.
-        keep = valid_nbr & atom_is_real[:, :, None]
-        nbr_idx_pose = jnp.where(keep, nbr_idx_pose, -1)
-        return nbr_idx_pose, keep
 
     def _annotate_pbt_acceptor_bases(self, pbt: Any, max_H_per_donor: int) -> None:
         """Cache per-BT acceptor-base / donor-H tables on ``pbt``.
@@ -1160,79 +961,6 @@ class LKBallEnergyTerm(EnergyTerm):
             jnp.asarray(n_H, dtype=jnp.int32),
         )
 
-    def _per_atom_acceptor_bases_and_donor_hs(
-        self,
-        pose_stack: Any,
-        pbt: Any,
-        max_H_per_donor: int,
-    ) -> Tuple[
-        jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array
-    ]:
-        """Per-polar-atom acceptor B/B0 indices + attached-H list.
-
-        Pose-level scatter of the palette-cached ``lkball_bt_*`` tables.
-        All work happens on-device as pure-JAX gathers; the Python bond
-        walk is performed once per palette in :meth:`_annotate_pbt_acceptor_bases`.
-
-        All indices are *pose-level*. ``-1`` sentinels mark padding.
-        """
-        if pbt is None:
-            pbt = pose_stack.packed_block_types
-        self._annotate_pbt_acceptor_bases(pbt, max_H_per_donor)
-
-        B_local_table = getattr(pbt, f"lkball_bt_B_local_k{max_H_per_donor}")
-        B0_local_table = getattr(pbt, f"lkball_bt_B0_local_k{max_H_per_donor}")
-        acc_hyb_table = getattr(pbt, f"lkball_bt_acc_hyb_k{max_H_per_donor}")
-        H_local_table = getattr(pbt, f"lkball_bt_H_local_k{max_H_per_donor}")
-
-        # Build the (block_for_atom, local_for_atom) indexing tables
-        # once; reuse for every gather below.
-        from tmol_jax.score.common.count_pair import pose_atom_block_index
-
-        bti = jnp.asarray(pose_stack.block_type_ind, dtype=jnp.int32)
-        offsets = jnp.asarray(pose_stack.block_coord_offset, dtype=jnp.int32)
-        n_atoms_per_type = jnp.asarray(pbt.n_atoms, dtype=jnp.int32)
-        A = int(pose_stack.max_n_atoms_per_pose)
-        block_for_atom, local_for_atom, atom_is_real = pose_atom_block_index(
-            bti, offsets, n_atoms_per_type, A
-        )
-        P = bti.shape[0]
-        safe_bti = jnp.where(bti >= 0, bti, 0)
-        bti_of_atom = safe_bti[jnp.arange(P)[:, None], block_for_atom]  # [P, N]
-
-        # Gather scalar (B / B0 / hyb) tables: [P, N].
-        B_loc = B_local_table[bti_of_atom, local_for_atom]
-        B0_loc = B0_local_table[bti_of_atom, local_for_atom]
-        acc_hyb_pose = acc_hyb_table[bti_of_atom, local_for_atom]
-        H_loc = H_local_table[bti_of_atom, local_for_atom]  # [P, N, K]
-
-        # Turn local indices into pose-global indices by adding the
-        # per-atom block offset. Sentinel -1 stays -1.
-        block_offset = offsets[jnp.arange(P)[:, None], block_for_atom]  # [P, N]
-        B_valid = (B_loc >= 0) & atom_is_real
-        B0_valid = (B0_loc >= 0) & atom_is_real
-        H_valid = (H_loc >= 0) & atom_is_real[:, :, None]
-        B_idx = jnp.where(B_valid, block_offset + jnp.where(B_valid, B_loc, 0), -1)
-        B0_idx = jnp.where(
-            B0_valid, block_offset + jnp.where(B0_valid, B0_loc, 0), -1
-        )
-        att_H_idx = jnp.where(
-            H_valid,
-            block_offset[:, :, None] + jnp.where(H_valid, H_loc, 0),
-            -1,
-        )
-        acc_hyb_out = jnp.where(atom_is_real, acc_hyb_pose, 0)
-        n_H_out = jnp.sum(H_valid.astype(jnp.int32), axis=-1)
-
-        return (
-            B_idx.astype(jnp.int32),
-            B0_idx.astype(jnp.int32),
-            acc_hyb_out.astype(jnp.int32),
-            att_H_idx.astype(jnp.int32),
-            H_valid,
-            n_H_out,
-        )
-
     def _per_atom_bonded_path_length(
         self, pose_stack: Any, pbt: Any
     ) -> jax.Array:
@@ -1258,23 +986,20 @@ class LKBallEnergyTerm(EnergyTerm):
         jax.Array, jax.Array, jax.Array, jax.Array, jax.Array,  # flags
         jax.Array,  # is_occluder
         jax.Array,  # is_real
-        jax.Array, jax.Array,  # neighbor_idx, neighbor_mask
         jax.Array, jax.Array, jax.Array,  # B_idx, B0_idx, acc_hyb
         jax.Array, jax.Array, jax.Array,  # attached_H_idx, _mask, n_H
     ]:
         """Batched per-pose-atom scatter of all LK-ball palette tables.
 
         Consolidates every LK-ball palette scatter (simple LJ/LK params,
-        polar flags, acceptor bases, donor Hs, neighbour lists) into a
-        single jit-compiled function
-        :func:`_lkball_pose_palette_jit`. Previously this was ~10
-        separate JAX dispatches totalling ~5 ms per setup; the fused
-        version runs in ~100 us once the trace is cached.
+        polar flags, acceptor bases, donor Hs) into a single jit-compiled
+        function :func:`_lkball_pose_palette_jit`. ``max_n_neighbors`` is
+        accepted for backwards compatibility but unused.
         """
+        del max_n_neighbors  # ponytail: kept on the public ctor for compat
         # Ensure every palette-level cache is populated. Idempotent.
         self._annotate_pbt_ljlk_tables(pbt)
         self._annotate_pbt_polar_flags(pbt)
-        self._per_atom_neighbors_cache(pbt, max_n_neighbors)
         self._annotate_pbt_acceptor_bases(pbt, max_H_per_donor)
 
         bti = jnp.asarray(pose_stack.block_type_ind, dtype=jnp.int32)
@@ -1295,92 +1020,12 @@ class LKBallEnergyTerm(EnergyTerm):
             pbt.lkball_bt_is_hxl,
             pbt.lkball_bt_is_ph,
             pbt.lkball_bt_is_hydrogen,
-            getattr(pbt, f"lkball_nbr_table_k{max_n_neighbors}"),
             getattr(pbt, f"lkball_bt_B_local_k{max_H_per_donor}"),
             getattr(pbt, f"lkball_bt_B0_local_k{max_H_per_donor}"),
             getattr(pbt, f"lkball_bt_acc_hyb_k{max_H_per_donor}"),
             getattr(pbt, f"lkball_bt_H_local_k{max_H_per_donor}"),
             A,
         )
-
-    def _per_atom_neighbors_cache(self, pbt: Any, max_n_neighbors: int) -> None:
-        """Build the palette-level neighbour table (idempotent).
-
-        Split out of :meth:`_per_atom_neighbors` so ``_per_atom_full_palette``
-        can ensure the cache exists without paying the scatter cost
-        upfront (the scatter happens in the batched call).
-        """
-        cache_key = f"lkball_nbr_table_k{max_n_neighbors}"
-        if hasattr(pbt, cache_key):
-            return
-        n_types = int(pbt.n_types)
-        max_atoms_block = int(pbt.max_n_atoms)
-        bond_indices_np = np.asarray(pbt.bond_indices)
-        n_bonds_np = np.asarray(pbt.n_bonds)
-        nbr_table = np.full(
-            (n_types, max_atoms_block, max_n_neighbors), -1, dtype=np.int32
-        )
-        for bt in range(n_types):
-            filled = np.zeros(max_atoms_block, dtype=np.int32)
-            for e in range(int(n_bonds_np[bt])):
-                a = int(bond_indices_np[bt, e, 0])
-                b = int(bond_indices_np[bt, e, 1])
-                if 0 <= a < max_atoms_block and filled[a] < max_n_neighbors:
-                    nbr_table[bt, a, filled[a]] = b
-                    filled[a] += 1
-                if 0 <= b < max_atoms_block and filled[b] < max_n_neighbors:
-                    nbr_table[bt, b, filled[b]] = a
-                    filled[b] += 1
-        setattr(pbt, cache_key, jnp.asarray(nbr_table, dtype=jnp.int32))
-
-    # ------------------------------------------------------------------ #
-    # Helpers                                                             #
-    # ------------------------------------------------------------------ #
-
-    def _pack_per_atom(
-        self,
-        pose_stack: Any,
-        pbt: Any,
-        per_block_idx: np.ndarray,
-        value_table: np.ndarray,
-    ) -> jax.Array:
-        """Convert a [n_types, max_atoms_block] index table into a
-        [n_poses, max_atoms_pose] value array.
-
-        ``per_block_idx[b_type, local_atom] = idx_into(value_table)``,
-        with ``-1`` sentinels yielding 0.
-        """
-        gathered = np.where(
-            per_block_idx >= 0,
-            value_table[np.clip(per_block_idx, 0, None)],
-            0.0,
-        )
-        return self._pack_per_atom_from_block_table(
-            pose_stack, pbt, gathered.astype(np.float32)
-        )
-
-    def _pack_per_atom_from_block_table(
-        self,
-        pose_stack: Any,
-        pbt: Any,
-        per_block_values: np.ndarray,
-    ) -> jax.Array:
-        """Scatter a [n_types, max_atoms_block] value table into the
-        pose-level [n_poses, max_atoms_pose] layout.
-
-        Pure-JAX gather using the shared ``scatter_per_atom`` helper so
-        every call stays on-device and amortises the ``pose_atom_block_index``
-        trace.
-        """
-        from tmol_jax.score.common.count_pair import scatter_per_atom
-
-        table = jnp.asarray(per_block_values, dtype=jnp.float32)
-        bti = jnp.asarray(pose_stack.block_type_ind, dtype=jnp.int32)
-        offsets = jnp.asarray(pose_stack.block_coord_offset, dtype=jnp.int32)
-        n_atoms_per_type = jnp.asarray(pbt.n_atoms, dtype=jnp.int32)
-        A = int(pose_stack.max_n_atoms_per_pose)
-        return scatter_per_atom(table, bti, offsets, n_atoms_per_type, A)
-
 
 # --------------------------------------------------------------------------- #
 # Internal helpers                                                             #

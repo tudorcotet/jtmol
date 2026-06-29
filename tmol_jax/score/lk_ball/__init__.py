@@ -16,12 +16,10 @@ Four score types are exported:
                        (same geometry, not scaled by LK magnitude).
 
 The port matches the upstream algorithm where feasible; see the
-docstrings in :mod:`.potentials` and
-:mod:`.lk_ball_energy_term` for the full list of simplifications
-(notably: a simplified water-placement geometry and an optional
-"parity-preserving" energy-term path that returns ``lk_ball_iso == lk_lj``
-and zero for the other three channels when the upstream infrastructure
-is not yet available).
+docstrings in :mod:`.potentials` and :mod:`.lk_ball_energy_term`
+for the full list of simplifications (notably: an optional
+"parity-preserving" energy-term path that returns zeros for all four
+channels when the upstream infrastructure is not yet available).
 """
 
 from __future__ import annotations
@@ -33,7 +31,6 @@ from tmol_jax.score.lk_ball.potentials import (
     lk_ball_pair,
     lk_bridge_fraction,
     lk_fraction,
-    place_waters_for_atom,
 )
 
 __all__ = [
@@ -43,5 +40,4 @@ __all__ = [
     "lk_ball_pair",
     "lk_bridge_fraction",
     "lk_fraction",
-    "place_waters_for_atom",
 ]
