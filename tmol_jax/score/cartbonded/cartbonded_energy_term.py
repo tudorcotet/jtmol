@@ -539,6 +539,40 @@ def _path_atoms(path: np.ndarray) -> Tuple[int, ...]:
     return tuple(int(a) for a in path if int(a) != -1)
 
 
+def _build_cart_lat_dbs(
+    res: Any,
+) -> Tuple[Dict[Tuple[str, ...], Tuple[float, float]],
+          Dict[Tuple[str, ...], Tuple[float, float]],
+          Dict[Tuple[str, ...], Tuple[float, ...]]]:
+    """Build (length, angle, torsion) name-keyed DB dicts from a residue's
+    cart-bonded params (or ``None``).
+
+    Keys are atom-name tuples; both forward and reversed keys are stored
+    so callers get symmetric lookup. Parameter tuples are ``(x0, K)`` for
+    lengths and angles, and the full 6-wide
+    ``(k1, k2, k3, phi1, phi2, phi3)`` vector for torsions.
+    """
+    ldb: Dict[Tuple[str, ...], Tuple[float, float]] = {}
+    adb: Dict[Tuple[str, ...], Tuple[float, float]] = {}
+    tdb: Dict[Tuple[str, ...], Tuple[float, ...]] = {}
+    if res is None:
+        return ldb, adb, tdb
+    for p in res.length_parameters:
+        k = _length_key(p)
+        ldb[k] = (p.x0, p.K)
+        ldb[_reverse(k)] = (p.x0, p.K)
+    for p in res.angle_parameters:
+        k = _angle_key(p)
+        adb[k] = (p.x0, p.K)
+        adb[_reverse(k)] = (p.x0, p.K)
+    for p in res.torsion_parameters:
+        k = _torsion_key(p)
+        vals = (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
+        tdb[k] = vals
+        tdb[_reverse(k)] = vals
+    return ldb, adb, tdb
+
+
 def _build_cart_dbs_for_residue(
     rt: Any, cart_db: Any
 ) -> Tuple[Dict[Tuple[str, ...], Tuple[float, float]],
@@ -546,31 +580,11 @@ def _build_cart_dbs_for_residue(
           Dict[Tuple[str, ...], Tuple[float, ...]]]:
     """Per-residue (length, angle, torsion) name-keyed DB dicts.
 
-    Keys are atom-name tuples; both forward and reversed keys are stored
-    so callers get symmetric lookup. Parameter tuples are
-    ``(x0, K)`` for lengths and angles, and the full
-    ``(k1, k2, k3, phi1, phi2, phi3)`` vector for torsions.
+    Honors the CYD hash-miss replication via :func:`_base_name_for_lookup`.
     """
-    base = _base_name_for_lookup(rt)
-    res = cart_db.residue_params.get(base)
-    ldb: Dict[Tuple[str, ...], Tuple[float, float]] = {}
-    adb: Dict[Tuple[str, ...], Tuple[float, float]] = {}
-    tdb: Dict[Tuple[str, ...], Tuple[float, ...]] = {}
-    if res is not None:
-        for p in res.length_parameters:
-            k = _length_key(p)
-            ldb[k] = (p.x0, p.K)
-            ldb[_reverse(k)] = (p.x0, p.K)
-        for p in res.angle_parameters:
-            k = _angle_key(p)
-            adb[k] = (p.x0, p.K)
-            adb[_reverse(k)] = (p.x0, p.K)
-        for p in res.torsion_parameters:
-            k = _torsion_key(p)
-            vals = (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
-            tdb[k] = vals
-            tdb[_reverse(k)] = vals
-    return ldb, adb, tdb
+    return _build_cart_lat_dbs(
+        cart_db.residue_params.get(_base_name_for_lookup(rt))
+    )
 
 
 def _build_cart_wildcard_dbs(
@@ -579,25 +593,7 @@ def _build_cart_wildcard_dbs(
           Dict[Tuple[str, ...], Tuple[float, float]],
           Dict[Tuple[str, ...], Tuple[float, ...]]]:
     """``wildcard`` DB dicts (same shape as :func:`_build_cart_dbs_for_residue`)."""
-    wild = cart_db.residue_params.get("wildcard")
-    ldb: Dict[Tuple[str, ...], Tuple[float, float]] = {}
-    adb: Dict[Tuple[str, ...], Tuple[float, float]] = {}
-    tdb: Dict[Tuple[str, ...], Tuple[float, ...]] = {}
-    if wild is not None:
-        for p in wild.length_parameters:
-            k = _length_key(p)
-            ldb[k] = (p.x0, p.K)
-            ldb[_reverse(k)] = (p.x0, p.K)
-        for p in wild.angle_parameters:
-            k = _angle_key(p)
-            adb[k] = (p.x0, p.K)
-            adb[_reverse(k)] = (p.x0, p.K)
-        for p in wild.torsion_parameters:
-            k = _torsion_key(p)
-            vals = (p.k1, p.k2, p.k3, p.phi1, p.phi2, p.phi3)
-            tdb[k] = vals
-            tdb[_reverse(k)] = vals
-    return ldb, adb, tdb
+    return _build_cart_lat_dbs(cart_db.residue_params.get("wildcard"))
 
 
 def _inter_residue_subgraphs_for_pair(
