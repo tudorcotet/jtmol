@@ -45,7 +45,7 @@ DEFAULT_PDB = (
 
 INPUT_PDB = Path(os.environ.get("TMOL_JAX_PDB", str(DEFAULT_PDB)))
 OUTPUT_PDB = Path(os.environ.get("TMOL_JAX_OUT", "1ubq_min.pdb"))
-N_MIN_STEPS = int(os.environ.get("TMOL_JAX_STEPS", "50"))
+N_MIN_STEPS = int(os.environ.get("TMOL_JAX_STEPS", "100"))
 
 
 def _banner(title: str) -> None:
@@ -147,25 +147,12 @@ def main() -> int:
     # ``run_cart_min`` wraps the JAX LBFGS minimizer (see               #
     # tmol_jax.optimization.lbfgs). It returns a new PoseStack with     #
     # updated ``coords``; the rest of the pytree (block types,          #
-    # connectivity, etc.) is unchanged. We pass ``max_iter`` via         #
-    # ``optimizer_kwargs`` — the minimizer falls back to defaults if     #
-    # the kwarg name has drifted.                                        #
+    # connectivity, etc.) is unchanged.                                  #
     # ------------------------------------------------------------------ #
     _banner(f"Step 4/4: Run {N_MIN_STEPS} steps of cart min")
     try:
         t0 = time.perf_counter()
-        try:
-            minimized = run_cart_min(
-                pose_stack,
-                sfxn,
-                optimizer_kwargs={"max_iter": N_MIN_STEPS},
-            )
-        except TypeError:
-            # Older/newer API signature — fall back to defaults and let the
-            # minimizer pick its own iteration count. Still better than
-            # silently doing nothing.
-            print("  (optimizer_kwargs not accepted; falling back to defaults)")
-            minimized = run_cart_min(pose_stack, sfxn)
+        minimized = run_cart_min(pose_stack, sfxn, max_iter=N_MIN_STEPS)
         print(f"  minimized in {time.perf_counter() - t0:.2f}s")
 
         e_final = sfxn(minimized)
