@@ -463,14 +463,23 @@ def _format_multi_gpu_md(result: dict) -> str:
 
 @app.local_entrypoint()
 def run_bench(pdb: str = "1ubq"):
-    single_result = bench_one_pose.remote(pdb)
-    multi_result = bench_multi_gpu.remote(pdb)
-    md_single = _format_markdown(single_result)
-    md_multi = _format_multi_gpu_md(multi_result)
-    md = md_single + "\n\n" + md_multi + "\n"
+    result = bench_one_pose.remote(pdb)
+    md = _format_markdown(result)
     print()
     print(md)
     repo = pathlib.Path(__file__).resolve().parents[1]
     out_path = repo / "docs" / "BENCHMARKS.md"
+    out_path.write_text(md)
+    print(f"\nwrote {out_path}")
+
+
+@app.local_entrypoint()
+def run_pmap(pdb: str = "1ubq"):
+    result = bench_multi_gpu.remote(pdb)
+    md = _format_multi_gpu_md(result)
+    print()
+    print(md)
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    out_path = repo / "docs" / "BENCHMARKS_PMAP.md"
     out_path.write_text(md)
     print(f"\nwrote {out_path}")
