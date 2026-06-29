@@ -63,7 +63,6 @@ def _measure_phi_psi(pose_stack: Any, pose: int, block: int) -> Tuple[float, flo
 
     def _resolve(uaids, host_block):
         out = np.empty((4, 3), dtype=np.float64)
-        host_bt = int(bti[host_block])
         host_start = int(bco[host_block])
         for k in range(4):
             atom_id, conn_id, _ = uaids[k]

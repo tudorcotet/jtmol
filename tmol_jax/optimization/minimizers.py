@@ -284,7 +284,6 @@ def build_kinforest_network(
     fold_forest, kinforest = _build_kinforest(pose_stack, fold_forest)
 
     # Flatten pose-stack coords then gather into kin-forest order.
-    orig_shape = pose_stack.coords.shape  # [P, A, 3]
     flat_coords = jnp.asarray(pose_stack.coords, dtype=jnp.float64).reshape(-1, 3)
     ids = jnp.asarray(kinforest.id, dtype=jnp.int32)
     n_nodes = int(ids.shape[0])

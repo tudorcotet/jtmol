@@ -118,7 +118,6 @@ class CartesianMoveMap:
         bco = np.asarray(pose_stack.block_coord_offset)
         atom_is_bb = np.asarray(pbt.atom_is_backbone)  # [n_types, max_n_atoms]
         n_atoms = np.asarray(pbt.n_atoms)  # [n_types]
-        max_n_atoms_per_block = int(pbt.max_n_atoms)
 
         move = np.ones((n_poses, max_n_atoms_per_pose), dtype=np.bool_)
 

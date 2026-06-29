@@ -939,7 +939,6 @@ class CartBondedEnergyTerm(EnergyTerm):
         # Each entry in ``length_*`` is (local_A_atom, local_B_atom, params).
         # Each entry in ``angle_*``  is (tuple of 3 local atoms, is_on_B mask, params).
         # Each entry in ``torsion_*`` is (tuple of 4 local atoms, is_on_B mask, params).
-        pair_shape = (n_types, max(max_conn, 1), n_types, max(max_conn, 1))
         inter_lengths_by_pair: Dict[Tuple[int, int, int, int],
                                     List[Tuple[Tuple[int, ...], Tuple[bool, ...], Tuple[float, ...]]]] = {}
         inter_angles_by_pair: Dict[Tuple[int, int, int, int],
@@ -1264,7 +1263,6 @@ class CartBondedEnergyTerm(EnergyTerm):
     ) -> Dict[ScoreType, jax.Array]:
         coords = pose_stack.coords if coords_override is None else coords_override
         # coords: [P, A, 3]
-        n_poses = coords.shape[0]
 
         def _gather_xyz(global_atoms: jax.Array) -> jax.Array:
             """Gather coords by (pose, global_atom) indices.

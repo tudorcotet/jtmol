@@ -167,7 +167,6 @@ def _resolve_torsion_atoms(
     inter_conn = np.asarray(pose_stack.inter_residue_connections, dtype=np.int32)
 
     n_poses, max_n_blocks = block_type_ind.shape
-    n_types = per_block_atom_N.shape[0]
 
     real = block_type_ind >= 0  # [P, B]
     safe_bti = np.where(real, block_type_ind, 0)
@@ -181,7 +180,6 @@ def _resolve_torsion_atoms(
 
     has_ncac = real & (n_local >= 0) & (ca_local >= 0) & (c_local >= 0)
 
-    safe_ncac = np.where(has_ncac, 1, 0)
     n_g = np.where(has_ncac, block_coord_offset + n_local, -1)
     ca_g = np.where(has_ncac, block_coord_offset + ca_local, -1)
     c_g = np.where(has_ncac, block_coord_offset + c_local, -1)
