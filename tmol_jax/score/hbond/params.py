@@ -123,20 +123,6 @@ class HBondPairParams:
 
 
 @pytree_dataclass
-class HBondPoly:
-    """A single 1-D bounded polynomial fit.
-
-    ``coeffs`` use descending-power convention (``jnp.polyval``).
-    ``x_range = (x_lo, x_hi)``, ``y_bound = (y_lo, y_hi)`` — return
-    ``y_lo`` below ``x_lo``, ``y_hi`` above ``x_hi``.
-    """
-
-    coeffs: jnp.ndarray  # float32[11]
-    x_range: jnp.ndarray  # float32[2]
-    y_bound: jnp.ndarray  # float32[2]
-
-
-@pytree_dataclass
 class HBondPolynomials:
     """Four polynomial tables, each indexed by (donor_type, acceptor_type).
 
@@ -150,14 +136,14 @@ class HBondPolynomials:
     * ``cosAHD_poly`` — AHD *angle* (the polynomial is fit in angle
       space despite the ``cos`` in the name; see ``potentials.py``).
     * ``cosBAH_poly`` — cos(BAH).
-    * ``cosBAH_chi_poly`` — sp2 chi penalty (aka cosAHx). Unused for
-      sp3 / ring acceptors.
+
+    The sp2 chi penalty is analytic (see :func:`chi_angle_V`), not a
+    polynomial, so no chi table is stored here.
     """
 
     AHdist_poly: jnp.ndarray  # float64[n_don, n_acc, 15]
     cosAHD_poly: jnp.ndarray  # float64[n_don, n_acc, 15]
     cosBAH_poly: jnp.ndarray  # float64[n_don, n_acc, 15]
-    cosBAH_chi_poly: jnp.ndarray  # float64[n_don, n_acc, 15]
 
 
 # --------------------------------------------------------------------- #
@@ -317,11 +303,6 @@ def _build_pair_tables(
     ahdist = np.zeros((n_don, n_acc, 15), dtype=np.float64)
     ahd = np.zeros((n_don, n_acc, 15), dtype=np.float64)
     bah = np.zeros((n_don, n_acc, 15), dtype=np.float64)
-    # chi penalty is the analytic sp2 chi function in upstream (not a
-    # polynomial); we still reserve a slot so the datastructure is
-    # uniform and downstream branches on hybridization to decide which
-    # to invoke.
-    bah_chi = np.zeros((n_don, n_acc, 15), dtype=np.float64)
 
     for pp in hbond_db.pair_parameters:
         di = donor_type_to_idx.get(pp.donor_type)
@@ -336,7 +317,6 @@ def _build_pair_tables(
         AHdist_poly=jnp.asarray(ahdist),
         cosAHD_poly=jnp.asarray(ahd),
         cosBAH_poly=jnp.asarray(bah),
-        cosBAH_chi_poly=jnp.asarray(bah_chi),
     )
 
     return pair_params, polynomials, donor_type_to_idx, acceptor_type_to_idx
@@ -1368,7 +1348,6 @@ __all__ = [
     "HYBRIDIZATION_RING",
     "HBondGlobalParams",
     "HBondPairParams",
-    "HBondPoly",
     "HBondPolynomials",
     "HBondAtomParams",
     "HBondParams",

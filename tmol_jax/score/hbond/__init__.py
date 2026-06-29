@@ -41,7 +41,6 @@ from tmol_jax.score.hbond.params import (
     HBondGlobalParams,
     HBondPairParams,
     HBondParams,
-    HBondPoly,
     HBondPolynomials,
     hbond_params_for_pose_stack,
 )
@@ -63,7 +62,6 @@ __all__ = [
     "HBondGlobalParams",
     "HBondPairParams",
     "HBondParams",
-    "HBondPoly",
     "HBondPolynomials",
     "AH_dist_V",
     "AHD_angle_V",
