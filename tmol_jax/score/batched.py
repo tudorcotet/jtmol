@@ -39,8 +39,9 @@ def batched_energy(
     state: Optional[Any] = None,
     chunk_size: int = 16,
     score_dtype: Any = jnp.float32,
+    chunking_mode: str = "lax_map",
 ) -> Callable[[jax.Array], jax.Array]:
-    """Return ``fn(coords_batch) -> energies`` that chunks K via ``lax.map``.
+    """Return ``fn(coords_batch) -> energies`` that chunks K.
 
     Parameters
     ----------
@@ -62,6 +63,19 @@ def batched_energy(
         Cast ``coords`` to this dtype before passing to the score
         function. Pass ``jnp.float64`` (or ``None``) to disable the
         cast and use whatever the global JAX dtype is.
+    chunking_mode
+        ``"lax_map"`` (default) wraps the per-pose kernel in
+        :func:`jax.lax.map` with ``batch_size=chunk_size``: one
+        XLA-traced loop, shares compile across chunks, lowest dispatch
+        overhead.
+
+        ``"python"`` uses a host-side Python ``for`` loop over chunks
+        of size ``chunk_size``, each chunk evaluated by ``jit(vmap(fn))``.
+        Higher per-chunk dispatch overhead, but works around XLA
+        autotuner workspace blow-ups that ``lax.map`` triggers for the
+        neighbor-list gather path (and a few other gather-heavy
+        kernels). Switch to ``"python"`` if ``"lax_map"`` OOMs at the
+        autotuner.
 
     Returns
     -------
@@ -81,8 +95,34 @@ def batched_energy(
         # even if score_dtype shaved the inputs to f32.
         return per_pose.astype(jnp.float64).sum()
 
-    def fn(coords_batch: jax.Array) -> jax.Array:
-        return jax.lax.map(single, coords_batch, batch_size=chunk_size)
+    if chunking_mode == "lax_map":
+        def fn(coords_batch: jax.Array) -> jax.Array:
+            return jax.lax.map(single, coords_batch, batch_size=chunk_size)
+    elif chunking_mode == "python":
+        chunked_vmap = jax.jit(jax.vmap(single))
+
+        def fn(coords_batch: jax.Array) -> jax.Array:
+            K = int(coords_batch.shape[0])
+            if K <= chunk_size:
+                return chunked_vmap(coords_batch)
+            parts = []
+            for i in range(0, K, chunk_size):
+                chunk = coords_batch[i : i + chunk_size]
+                if chunk.shape[0] < chunk_size:
+                    # Pad the tail to keep XLA shape stable across chunks;
+                    # slice the result back to the real length.
+                    pad = chunk_size - chunk.shape[0]
+                    chunk = jnp.concatenate(
+                        [chunk, jnp.broadcast_to(chunk[:1], (pad,) + chunk.shape[1:])],
+                        axis=0,
+                    )
+                    out = chunked_vmap(chunk)[: chunk_size - pad]
+                else:
+                    out = chunked_vmap(chunk)
+                parts.append(out)
+            return jnp.concatenate(parts, axis=0)
+    else:
+        raise ValueError(f"chunking_mode must be 'lax_map' or 'python', got {chunking_mode!r}")
 
     return fn
 
