@@ -13,7 +13,20 @@ comparing forward + gradient values cell-by-cell against jtmol. We did
 not modify upstream source; the workarounds live entirely on the
 jtmol side or in the harness.
 
+## Fixed by upstream (on master, not yet in wheel)
+
+| Bug | Fix commit | Wheel status |
+|-----|------------|--------------|
+| #2 cart_lengths / cart_angles silently 0 | `f4d0916` "Key on hash of cart-bonded params in PBT caching" (#383) | Not in `tmol-0.1.22+cu128torch2.10`. Harness still sees `0.0`; revisit when wheel rolls. |
+
+No other catalogued bug has an upstream fix as of `origin/master` `230fe74` (2026-06-30).
+
 ## 1. `lk_bridge_uncpl` gradient at sp2 backbone-O acceptors
+
+**Status as of 2026-06-30.** STILL-PRESENT on `origin/master` (`230fe74`). Touched
+by `1d7e18c` (dlin2) and `28d05b5` (ContextManager) but only to thread `max_dis`
+and `mgpu::context_t` through the backward signature; the adjoint math at sp2
+backbone-O acceptors is unchanged.
 
 Full reproducer and trace: [`UPSTREAM_BUG_LK_BRIDGE_UNCPL.md`](UPSTREAM_BUG_LK_BRIDGE_UNCPL.md).
 
@@ -34,6 +47,12 @@ derivative. The parity harness flags these cells as expected
 mismatches in the per-term notes column.
 
 ## 2. `CartBondedEnergyTerm` silently returns 0 for `cart_lengths` and `cart_angles`
+
+**Status as of 2026-06-30.** Candidate fix `f4d0916` ("Key on hash of cart-bonded
+params in PBT caching" #383) is on `origin/master`, but NOT in the pinned
+`tmol-0.1.22+cu128torch2.10` wheel the parity harness uses. The harness still
+sees `0.0` for these two channels; the YAML-golden fallback for 1ubq is still
+load-bearing. No jtmol-side action.
 
 **Symptom.** Upstream's compiled `CartBondedEnergyTerm` kernel returns
 exactly `0.0` for the 2-body (`cart_lengths`) and 3-body (`cart_angles`)
@@ -107,6 +126,11 @@ one go.
 
 ## 3. `ScoreFunction.set_weight(st, 0.0)` raises `AttributeError`
 
+**Status as of 2026-06-30.** STILL-PRESENT on `origin/master`. `set_weight`
+still calls the unimplemented `remove_term_for_score_type` (with a `# TO DO!`
+comment) when the last non-zero weight on a term is zeroed out. Harness
+workaround (fresh ScoreFunction per term) remains the only path.
+
 **Symptom.** Calling `set_weight(score_type, 0.0)` on an
 `UpScoreFunction` (after a prior non-zero weight was set on any term
 sharing the same Term class) triggers a code path that calls
@@ -146,6 +170,12 @@ for the worked example.
 
 ## 4. `CartBondedEnergyTerm` looks up `CYS` params for `CYD` residues but emits the wrong hash key
 
+**Status as of 2026-06-30.** STILL-PRESENT on `origin/master` (and unchanged by
+`f4d0916`). The Python-side `temp_hack_base_name = "CYS" if … "CYD"` remap is
+still in place; the compiled-side hash key still uses `CYD:<atom>`, so CYD
+intramolecular impropers still silently zero. jtmol continues to replicate the
+hash-miss deliberately for parity.
+
 **Symptom.** For disulfide-bonded cysteines (block-type `CYD`),
 upstream's cart_bonded improper-dihedral params get loaded from the
 `CYS` entry in the parameter database, but the runtime hash key uses
@@ -170,6 +200,10 @@ bug for parity rather than fix it. Flagged as a `# TODO!` in the
 upstream source.
 
 ## 5. Compiled cubic-Hermite kink adjoints use float32 internally even with float64 input
+
+**Status as of 2026-06-30.** STILL-PRESENT. None of the cubic-Hermite source
+files in upstream have been touched since `6d40bad`. Documented residual — only
+patchable inside upstream's C++/CUDA, not from python.
 
 **Symptom.** On the five score channels whose gradient chains through
 a cubic-Hermite kink (`omega`, `cart_torsions`, `cart_impropers`,
@@ -211,6 +245,10 @@ the 9 cells in [`UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md) with
 rather than parity failures.
 
 ## 6. `3plc` dunbrack b-spline output diverges from the header source for synthesized phi/psi
+
+**Status as of 2026-06-30.** STILL-PRESENT (unclear root cause). `bspline.py`,
+`bspline.hh`, `bspline.pybind.cpp` are untouched in upstream since `6d40bad`.
+Diagnosis still requires instrumenting the compiled kernel.
 
 **Symptom.** On 3plc, `dunbrack_rot` differs from upstream by 4.1%
 and `dunbrack_rotdev` by 21% at the two residues bracketing the

@@ -1,5 +1,34 @@
 # Upstream alignment audit (jtmol vs `uw-ipd/tmol` `origin/master`)
 
+## Aligned to upstream as of 2026-06-30 (HEAD: `013a8b8`)
+
+Re-audited against `origin/master` at `230fe74` ("Kdidi/ligand clean" #361)
+— no new upstream commits past the prior alignment baseline. This pass
+absorbed the two outstanding ports from the prior audit into a single
+synthesis on `ponytail-pass`.
+
+**Ported in this pass:**
+
+| PR | Port | Branch | Status |
+|----|------|--------|--------|
+| #361 ("Kdidi/ligand clean", ligand pipeline scaffold) | `tmol_jax/io/pose_stack_from_biotite.py` + `tmol_jax/ligand/` (params_file, params_io) | `worktree-wf_86344bb8-334-6` | Merged. Internal YAML-backed scaffold (`BiotitePoseBuildContext`, `build_context_from_biotite`, MMFF94 params loader, pysmiles cross-validator); smoke tests pass on `trypsin_complex.pdb` + `trypsin.xtal-lig.mmff94.tmol`. `gen_torsions` (the scoring half of #361) was already covered in the prior pass. |
+| #349 ("Aleaverfay/dlin2", `max_dis` / `lj_dlin_sigma_factor` plumbing) | YAML rename + threading through `LJLKGlobal` pytree, `lj_atr_rep`, `_lk_one_sided_with_fade`, `LJLKEnergyTerm.neighbor_list_cutoff`, `_LJLKState` / `_G` shims | `worktree-wf_86344bb8-334-5` | Merged. Defaults preserve byte-identical numerics (`4.5 ≡ 6.0 − 1.5`, `0.6` unchanged). Panel snapshot unchanged at `atol=1e-3 / rtol=1e-4`; `minimize_1ubq.py` final energy `-229.088`. |
+
+**Deferred (explicit, with reason):**
+
+- **`prepare_ligands=True` RDKit path** (~3000 LOC of SMARTS atom typing): no JAX-friendly substitute and the YAML path covers the protein-only panel. Hard-fails with `NotImplementedError` pointing at the YAML path. Add when a customer actually wants on-the-fly ligand typing.
+- **Extending `CanonicalOrdering` + `PackedBlockTypes` with the ligand `RawResidueType`**: the YAML loader produces the params but `canonical_form_from_biotite` still drops LG1 into the unrecognised bucket. Land in a separate pass when a ligand actually needs to score, not before — current panel is protein-only.
+- **Residue-level mainchain-completeness pruning in `_filter_supported_atoms_and_connectivity`**: marked with a `ponytail:` comment. Add when a real PDB triggers a partial-mainchain edge case.
+- **Bug 2 candidate fix** (upstream `f4d0916`, "Key on hash of cart-bonded params in PBT caching" #383): on `origin/master` but not in the pinned `tmol-0.1.22+cu128torch2.10` wheel the harness uses, so a port has no parity payoff today. Revisit when the wheel rolls.
+- **Bugs 1, 3, 4, 5, 6**: unchanged on upstream master since the last audit. No upstream fix to mirror.
+
+**Verification this pass:**
+
+- `tests/test_panel_snapshot.py::PanelSnapshotTest::test_panel_matches_snapshot` — PASS (188 s, all PDBs).
+- `examples/minimize_1ubq.py` — PASS, final energy per pose `-229.088`, delta `-457.40` over 100 cart-min steps.
+
+---
+
 Systematic diff of jtmol against the live upstream `master` branch
 (currently at commit `230fe74`, 14 commits ahead of the local checkout
 at `1d7e18c` used during jtmol's port). Run on 2026-06-19.
