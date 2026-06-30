@@ -16,14 +16,20 @@ one warmup.
 
 | residues | atoms | jtmol fwd (ms/pose) | upstream fwd | speedup | jtmol grad | upstream grad | speedup |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-|  75 | 1116 | 0.254 | 28.31 | **111×** |  1.166 | 31.52 | **27×** |
-| 100 | 1591 | 0.467 | 30.88 |  66× |  1.949 | 35.69 | 18× |
-| 150 | 2465 | 0.923 | 38.04 |  41× |  3.778 | 33.85 |  9× |
-| 200 | 3039 | 1.001 | 28.90 |  29× |  4.467 | 34.17 |  8× |
-| 300 | 4466 | 0.853 | 29.93 |  35× |  6.532 | 40.15 |  6× |
-| 400 | 5899 | 0.992 | 30.56 |  31× |  9.449 | 33.50 |  4× |
-| 500 | 7561 | 1.147 | 29.29 |  26× | 11.391 | 30.85 |  3× |
-| 600 | 8800 | 1.410 | 28.79 | **20×** | 13.907 | 32.52 | **2×** |
+|  75 | 1116 | 0.236 | 30.00 | **127×** |  1.159 | 32.40 | **28×** |
+| 100 | 1591 | 0.474 | 29.46 |  62× |  1.943 | 32.87 | 17× |
+| 150 | 2465 | 0.749 | 29.71 |  40× |  3.784 | 32.24 |  9× |
+| 200 | 3039 | 0.712 | 27.56 |  39× |  4.462 | 31.88 |  7× |
+| 300 | 4466 | 0.896 | 28.07 |  31× |  6.542 | 32.71 |  5× |
+| 400 | 5899 | 1.004 | 28.94 |  29× |  9.448 | 35.39 |  4× |
+| 500 | 7561 | 1.143 | 28.23 |  25× | 11.448 | 32.61 |  3× |
+| 600 | 8800 | 1.411 | 28.91 | **20×** | 13.957 | 34.43 | **2×** |
+
+Forward is measured under `torch.no_grad()` on the upstream side so
+neither backend builds an autograd tape it discards — a fair
+forward-vs-forward comparison. (This correction left the forward
+speedups essentially unchanged: upstream forward is dispatch-bound, so
+tape-building is negligible against kernel-launch overhead.)
 
 Per-pose forward latency stays under 1.5 ms across an 8× range of
 protein size. Upstream stays at ~30 ms because Python and PyTorch

@@ -15,13 +15,14 @@ import seaborn as sns
 
 sns.set_theme(style="whitegrid", context="talk")
 
-# Numbers from docs/BENCHMARKS_SIZE_NL.md.
+# Numbers from docs/BENCHMARKS_SIZE_NL.md (forward measured under
+# torch.no_grad for a fair forward-vs-forward comparison).
 residues = [75, 100, 150, 200, 300, 400, 500, 600]
 atoms    = [1116, 1591, 2465, 3039, 4466, 5899, 7561, 8800]
-jtmol_e  = [0.254, 0.467, 0.923, 1.001, 0.853, 0.992, 1.147, 1.410]
-up_e     = [28.314, 30.882, 38.035, 28.899, 29.931, 30.562, 29.287, 28.788]
-jtmol_g  = [1.166, 1.949, 3.778, 4.467, 6.532, 9.449, 11.391, 13.907]
-up_g     = [31.520, 35.686, 33.847, 34.166, 40.151, 33.497, 30.852, 32.521]
+jtmol_e  = [0.236, 0.474, 0.749, 0.712, 0.896, 1.004, 1.143, 1.411]
+up_e     = [30.004, 29.456, 29.712, 27.559, 28.071, 28.939, 28.231, 28.905]
+jtmol_g  = [1.159, 1.943, 3.784, 4.462, 6.542, 9.448, 11.448, 13.957]
+up_g     = [32.397, 32.873, 32.241, 31.880, 32.711, 35.392, 32.607, 34.432]
 
 speedup_e = [u / j for u, j in zip(up_e, jtmol_e)]
 speedup_g = [u / j for u, j in zip(up_g, jtmol_g)]

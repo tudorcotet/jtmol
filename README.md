@@ -70,9 +70,9 @@ Upstream is the live PyTorch wheel doing K serial scorings.
 
 | Protein size | jtmol forward (ms/pose) | upstream forward | speedup | jtmol gradient | upstream gradient | speedup |
 |---:|---:|---:|---:|---:|---:|---:|
-| 75 res | 0.25 | 28.3 | **111×** | 1.17 | 31.5 | **27×** |
-| 200 res | 1.00 | 28.9 | 29× | 4.47 | 34.2 | 7.6× |
-| 600 res | 1.41 | 28.8 | **20×** | 13.9 | 32.5 | **2.3×** |
+| 75 res | 0.24 | 30.0 | **127×** | 1.16 | 32.4 | **28×** |
+| 200 res | 0.71 | 27.6 | 39× | 4.46 | 31.9 | 7.1× |
+| 600 res | 1.41 | 28.9 | **20×** | 13.96 | 34.4 | **2.5×** |
 
 Two structural reasons for the gap:
 
