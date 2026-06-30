@@ -115,7 +115,15 @@ def test_extend_db_from_yaml_appends_atom_types() -> None:
     )
 
     assert len(parsed) == 1
-    assert len(ext.atom_types) == base_atom_count + len(parsed[0].atom_type_names)
+    # The generic-potential ligand atom types are now first-class in
+    # chemical.yaml (upstream PR #361), so extend_db_from_yaml only adds
+    # the ones not already present (here: none -- all are in the base db).
+    new_atom_types = [
+        n for n in parsed[0].atom_type_names
+        if n not in {a.name for a in base.atom_types}
+    ]
+    assert len(ext.atom_types) == base_atom_count + len(new_atom_types)
+    assert {a.name for a in base.atom_types} <= {a.name for a in ext.atom_types}
     assert len(ext.residues) == base_residue_count + 1
     # Element table and variants untouched.
     assert ext.element_types == base.element_types
