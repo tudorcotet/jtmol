@@ -168,17 +168,20 @@ class LJTypeParams:
 class LJLKGlobal:
     """LJ / LK global parameters (one scalar each).
 
-    Only the three hydrogen-bond-related "sigma override" scalars are
-    needed at evaluation time. The other globals on the upstream
-    :class:`LJLKGlobalParams` (e.g. ``max_dis``, ``lj_switch_dis2sigma``)
-    are either hard-coded into the C++ potentials (``cpoly_dmax``,
-    ``d_lin = 0.6 * sigma``) or used only during database loading and do
-    not appear in the score function.
+    ``max_dis`` is the far cpoly cutoff (``cpoly_dmax``) and
+    ``lj_dlin_sigma_factor`` is the multiplier in ``d_lin = sigma *
+    factor`` that sets the linear-extrapolation crossover on the LJ
+    repulsive wall. Both are threaded through to the potentials so a
+    non-default YAML override changes behaviour without code edits.
+    The three H-bond sigma overrides select per-pair ``sigma`` in
+    :func:`tmol_jax.score.ljlk.potentials.lj_sigma`.
     """
 
     lj_hbond_dis: jax.Array
     lj_hbond_OH_donor_dis: jax.Array
     lj_hbond_hdis: jax.Array
+    max_dis: jax.Array
+    lj_dlin_sigma_factor: jax.Array
 
     @classmethod
     def from_database(cls, ljlk_db: Any) -> "LJLKGlobal":
@@ -189,6 +192,10 @@ class LJLKGlobal:
                 gp.lj_hbond_OH_donor_dis, dtype=jnp.float32
             ),
             lj_hbond_hdis=as_jnp(gp.lj_hbond_hdis, dtype=jnp.float32),
+            max_dis=as_jnp(gp.max_dis, dtype=jnp.float32),
+            lj_dlin_sigma_factor=as_jnp(
+                gp.lj_dlin_sigma_factor, dtype=jnp.float32
+            ),
         )
 
 

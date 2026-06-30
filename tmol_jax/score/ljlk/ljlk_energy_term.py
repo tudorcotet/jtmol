@@ -135,6 +135,8 @@ class _LJLKState:
     global_lj_hbond_dis: jax.Array
     global_lj_hbond_OH_donor_dis: jax.Array
     global_lj_hbond_hdis: jax.Array
+    global_max_dis: jax.Array
+    global_lj_dlin_sigma_factor: jax.Array
 
     # ---- Optional cell-list state ---------------------------------- #
     # Populated iff the term was configured with ``use_neighbor_list=True``.
@@ -254,17 +256,21 @@ class LJLKEnergyTerm(EnergyTerm):
         self,
         param_db: Any = None,
         use_neighbor_list: bool = False,
-        # ponytail: matches LJLKGlobalParams.max_dis (= 6.0) post-upstream
-        # commit 1d7e18c. Read from db.global_params.max_dis if jtmol ever
-        # needs to track a non-default cutoff.
-        neighbor_list_cutoff: float = 6.0,
+        # When ``None`` (default), resolved at setup time from
+        # ``db.scoring.ljlk.global_parameters.max_dis``. Override to pin a
+        # non-default cell-list cutoff (must be >= the actual ``max_dis``
+        # or the neighbour list will drop pairs the potentials would
+        # otherwise score).
+        neighbor_list_cutoff: Optional[float] = None,
     ) -> None:
         # The base EnergyTerm stores ``param_db`` for us; we also
         # remember the opt-in flag so setup can route to the cell-list
         # builder.
         super().__init__(param_db=param_db)
         self.use_neighbor_list = bool(use_neighbor_list)
-        self.neighbor_list_cutoff = float(neighbor_list_cutoff)
+        self.neighbor_list_cutoff = (
+            None if neighbor_list_cutoff is None else float(neighbor_list_cutoff)
+        )
 
     def score_types_provided(self) -> list[ScoreType]:
         return [ScoreType.fa_ljatr, ScoreType.fa_ljrep, ScoreType.fa_lk]
@@ -326,9 +332,16 @@ class LJLKEnergyTerm(EnergyTerm):
         neighbor_mask = None
         bpl_neighbor = None
         if self.use_neighbor_list:
+            cutoff = (
+                self.neighbor_list_cutoff
+                if self.neighbor_list_cutoff is not None
+                else float(
+                    self.param_db.scoring.ljlk.global_parameters.max_dis
+                )
+            )
             nbr_idx, _n_nbrs, nbr_mask = build_cell_list(
                 pose_stack.coords,
-                cutoff=self.neighbor_list_cutoff,
+                cutoff=cutoff,
                 atom_is_real=np.asarray(atom_is_real),
                 half_list=True,
             )
@@ -355,6 +368,8 @@ class LJLKEnergyTerm(EnergyTerm):
             global_lj_hbond_dis=global_params.lj_hbond_dis,
             global_lj_hbond_OH_donor_dis=global_params.lj_hbond_OH_donor_dis,
             global_lj_hbond_hdis=global_params.lj_hbond_hdis,
+            global_max_dis=global_params.max_dis,
+            global_lj_dlin_sigma_factor=global_params.lj_dlin_sigma_factor,
             neighbor_idx=neighbor_idx,
             neighbor_mask=neighbor_mask,
             bpl_neighbor=bpl_neighbor,
@@ -433,6 +448,8 @@ class LJLKEnergyTerm(EnergyTerm):
             lj_hbond_dis = s.global_lj_hbond_dis
             lj_hbond_OH_donor_dis = s.global_lj_hbond_OH_donor_dis
             lj_hbond_hdis = s.global_lj_hbond_hdis
+            max_dis = s.global_max_dis
+            lj_dlin_sigma_factor = s.global_lj_dlin_sigma_factor
 
         Vatr, Vrep = lj_atr_rep(dist, s.bonded_path_length, i_params, j_params, _G)
         Vlk = lk_isotropic_pair(
@@ -543,6 +560,8 @@ class LJLKEnergyTerm(EnergyTerm):
             lj_hbond_dis = s.global_lj_hbond_dis
             lj_hbond_OH_donor_dis = s.global_lj_hbond_OH_donor_dis
             lj_hbond_hdis = s.global_lj_hbond_hdis
+            max_dis = s.global_max_dis
+            lj_dlin_sigma_factor = s.global_lj_dlin_sigma_factor
 
         # ``bpl_neighbor`` was gathered host-side in setup so the
         # count-pair weight is already in the neighbour layout.
