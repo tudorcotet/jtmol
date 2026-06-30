@@ -112,14 +112,28 @@ def _charges_for_block_type(
     upstream treatment of virtual atoms.
     """
 
+    atoms = tuple(block_type.atoms)
+    out = np.zeros(len(atoms), dtype=np.float32)
+
+    # Restype-carried charges (e.g. a ligand RefinedResidueType built
+    # from a ``.tmol`` params file) take precedence over the elec-DB
+    # lookup. Canonical residues never set this attribute, so their
+    # charges are byte-unchanged. Mirrors upstream's per-block
+    # ``elec_partial_charge`` annotation.
+    restype_charges = getattr(block_type, "elec_partial_charges", None)
+    if restype_charges is not None:
+        for i, atm in enumerate(atoms):
+            atm_name = getattr(atm, "name", atm)
+            if atm_name in restype_charges:
+                out[i] = np.float32(restype_charges[atm_name])
+        return out
+
     name = str(block_type.name)
     res, *patches = name.split(":")
     # Unpatched last — see upstream `get_partial_charges_for_block`.
     patches.append("")
 
     res_table = partial_charges.get(res)
-    atoms = tuple(block_type.atoms)
-    out = np.zeros(len(atoms), dtype=np.float32)
     if res_table is None:
         return out
 

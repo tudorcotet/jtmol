@@ -85,14 +85,93 @@ def test_ligand_in_pose_and_scores() -> None:
         assert val != 0.0, f"{term} is zero -- ligand LJ/LK not contributing"
 
 
+def _lg1_block_slice(ps, pbt, lg1_idx):
+    """Return ``(pose, start, n)`` for the single LG1 block in ``ps``."""
+    bti = np.asarray(ps.block_type_ind)
+    offs = np.asarray(ps.block_coord_offset)
+    n_per_type = np.asarray(pbt.n_atoms)
+    p, b = np.argwhere(bti == lg1_idx)[0]
+    start = int(offs[p, b])
+    n = int(n_per_type[lg1_idx])
+    return int(p), start, n
+
+
+def test_ligand_partial_charges_flow_into_fa_elec() -> None:
+    """The ligand's parsed ``.tmol`` partial charges reach fa_elec.
+
+    Two assertions:
+
+    1. The elec per-atom ``charges`` array is non-zero at the LG1 block's
+       atom slots (the ligand carries real partial charges now).
+    2. ``fa_elec`` is finite AND differs from the value obtained by
+       zeroing only the ligand atoms' charges -- proving the ligand
+       actually contributes to the electrostatics term.
+    """
+    from tmol_jax.database import ParameterDatabase
+    from tmol_jax.io.pose_stack_from_biotite import (
+        build_context_from_biotite,
+        pose_stack_from_biotite,
+    )
+    from tmol_jax.score.elec.elec_energy_term import ElecEnergyTerm
+    from tmol_jax.score.score_types import ScoreType
+
+    atoms = _load_atoms()
+
+    ctx = build_context_from_biotite(atoms, ligand_params_files=[_TMOL])
+    pbt = ctx.packed_block_types
+    lg1_idx = {bt.name: i for i, bt in enumerate(pbt.active_block_types)}["LG1"]
+    ps = pose_stack_from_biotite(atoms, ligand_params_files=[_TMOL])
+
+    term = ElecEnergyTerm(ParameterDatabase.get_default())
+    state = term.setup_for_pose_stack(ps, pbt)
+    charges = np.asarray(state.charges)  # [P, N]
+
+    p, start, n = _lg1_block_slice(ps, pbt, lg1_idx)
+    lig_charges = charges[p, start : start + n]
+    n_nonzero = int((lig_charges != 0.0).sum())
+    assert n_nonzero > 0, "ligand atoms carry no partial charge in elec array"
+
+    fa_elec = float(np.asarray(term(ps, state)[ScoreType.fa_elec]).sum())
+    assert np.isfinite(fa_elec), f"fa_elec not finite: {fa_elec}"
+
+    # Re-score with only the ligand charges zeroed.
+    import jax.numpy as jnp
+
+    ch_zeroed = charges.copy()
+    ch_zeroed[p, start : start + n] = 0.0
+    state_zeroed = state.__class__(
+        charges=jnp.asarray(ch_zeroed),
+        bonded_path_length=state.bonded_path_length,
+        atom_is_real=state.atom_is_real,
+        D=state.D,
+        D0=state.D0,
+        S=state.S,
+        min_dis=state.min_dis,
+        max_dis=state.max_dis,
+    )
+    fa_elec_zeroed = float(
+        np.asarray(term(ps, state_zeroed)[ScoreType.fa_elec]).sum()
+    )
+    assert fa_elec != fa_elec_zeroed, (
+        "fa_elec unchanged when ligand charges zeroed -- ligand not "
+        f"contributing (both {fa_elec})"
+    )
+
+
 if __name__ == "__main__":  # pragma: no cover - manual driver
     import sys
 
-    try:
-        test_ligand_in_pose_and_scores()
-        print("PASS  test_ligand_in_pose_and_scores")
-    except pytest.skip.Exception as exc:
-        print(f"SKIP  {exc}")
-    except Exception as exc:
-        print(f"FAIL  {exc!r}")
-        sys.exit(1)
+    failed = []
+    for fn in (
+        test_ligand_in_pose_and_scores,
+        test_ligand_partial_charges_flow_into_fa_elec,
+    ):
+        try:
+            fn()
+            print(f"PASS  {fn.__name__}")
+        except pytest.skip.Exception as exc:
+            print(f"SKIP  {fn.__name__}: {exc}")
+        except Exception as exc:
+            print(f"FAIL  {fn.__name__}: {exc!r}")
+            failed.append(fn.__name__)
+    sys.exit(1 if failed else 0)
