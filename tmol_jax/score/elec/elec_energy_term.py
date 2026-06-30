@@ -49,6 +49,12 @@ from tmol_jax.score.common.count_pair import (
     pair_bonded_path_length_direct,
     pose_atom_real_mask,
 )
+from tmol_jax.score.common.neighbor_list import (
+    _take_2d,
+    _take_3d,
+    build_cell_list,
+    gather_pair_matrix,
+)
 from tmol_jax.score.elec.params import (
     ElecGlobalParams,
     _cp_reps_dict,
@@ -414,6 +420,14 @@ class _ElecState:
     min_dis: jax.Array
     max_dis: jax.Array
 
+    # Optional cell-list state (populated only when use_neighbor_list=True).
+    # neighbor_idx       : [P, N, max_nbr] int32 (half-list; j > i)
+    # neighbor_mask      : [P, N, max_nbr] bool
+    # bpl_neighbor       : [P, N, max_nbr] int32 (gathered bonded-path-length)
+    neighbor_idx: Any = None
+    neighbor_mask: Any = None
+    bpl_neighbor: Any = None
+
 
 class ElecEnergyTerm(EnergyTerm):
     """Whole-pose electrostatics energy term.
@@ -428,7 +442,16 @@ class ElecEnergyTerm(EnergyTerm):
     is threaded into :meth:`__call__`.
     """
 
-    def __init__(self, param_db: Any):
+    def __init__(
+        self,
+        param_db: Any,
+        use_neighbor_list: bool = False,
+        # 6.0 by default to match LJLK's cutoff; elec's actual max_dis is
+        # 5.5 in the default params, but the extra 0.5 A of neighbours just
+        # contribute E=0 inside the switch function. Same flag value across
+        # terms also lets sfxn-level toggling be one number.
+        neighbor_list_cutoff: float = 6.0,
+    ):
         # ``param_db`` may be either a ParameterDatabase (preferred, matches
         # the EnergyTerm base) or an ElecDatabase directly (legacy). Retain
         # both shapes so this term slots into the shared ScoreFunction
@@ -442,6 +465,8 @@ class ElecEnergyTerm(EnergyTerm):
         self.global_params: ElecGlobalParams = elec_global_params_from_database(
             self.elec_db
         )
+        self.use_neighbor_list = bool(use_neighbor_list)
+        self.neighbor_list_cutoff = float(neighbor_list_cutoff)
 
     # ---- class-level metadata ---------------------------------------
 
@@ -494,15 +519,38 @@ class ElecEnergyTerm(EnergyTerm):
         mask = _atom_is_real_mask(pose_stack, pbt)
 
         gp = self.global_params
+
+        bpl_jax = jnp.asarray(bpl, dtype=jnp.int32)
+        mask_jax = jnp.asarray(mask, dtype=bool)
+
+        # Optional cell-list construction (mirror the LJLK pattern). State
+        # stays None on the dense path so the pytree has no extra leaves.
+        neighbor_idx = None
+        neighbor_mask = None
+        bpl_neighbor = None
+        if self.use_neighbor_list:
+            nbr_idx, _n_nbrs, nbr_mask = build_cell_list(
+                pose_stack.coords,
+                cutoff=self.neighbor_list_cutoff,
+                atom_is_real=np.asarray(mask),
+                half_list=True,
+            )
+            bpl_neighbor = gather_pair_matrix(bpl_jax, nbr_idx)
+            neighbor_idx = nbr_idx
+            neighbor_mask = nbr_mask
+
         return _ElecState(
             charges=jnp.asarray(charges, dtype=jnp.float32),
-            bonded_path_length=jnp.asarray(bpl, dtype=jnp.int32),
-            atom_is_real=jnp.asarray(mask, dtype=bool),
+            bonded_path_length=bpl_jax,
+            atom_is_real=mask_jax,
             D=jnp.asarray(gp.D, dtype=jnp.float32),
             D0=jnp.asarray(gp.D0, dtype=jnp.float32),
             S=jnp.asarray(gp.S, dtype=jnp.float32),
             min_dis=jnp.asarray(gp.min_dis, dtype=jnp.float32),
             max_dis=jnp.asarray(gp.max_dis, dtype=jnp.float32),
+            neighbor_idx=neighbor_idx,
+            neighbor_mask=neighbor_mask,
+            bpl_neighbor=bpl_neighbor,
         )
 
     # ---- scoring ----------------------------------------------------
@@ -524,6 +572,9 @@ class ElecEnergyTerm(EnergyTerm):
         coords = (
             coords_override if coords_override is not None else pose_stack.coords
         )
+
+        if self.use_neighbor_list and term_state.neighbor_idx is not None:
+            return self._call_neighbor_list(coords, term_state)
 
         # NaN-safe pairwise distances (double-where on the inside of sqrt).
         dist = _pairwise_distance(coords)  # [P, N, N]
@@ -553,6 +604,49 @@ class ElecEnergyTerm(EnergyTerm):
         # float32 scores as before; gradcheck callers feed float64 and
         # get float64 out, which is what the FD loop needs to avoid
         # ~1e-3 truncation noise on ``dE/dx ~ O(1)``.
+        score = jnp.sum(E_pair, axis=(-1, -2))
+        return {ScoreType.fa_elec: score}
+
+    def _call_neighbor_list(
+        self, coords: jax.Array, term_state: _ElecState
+    ) -> dict[ScoreType, jax.Array]:
+        """NL variant of :meth:`__call__`.
+
+        Mirrors the LJLK NL gather pattern: per-atom charges and bonded-
+        path-length are gathered along the precomputed half-list axis,
+        the same ``elec_pair`` element-wise function evaluates pair
+        energies on the ``[P, N, max_nbr]`` layout, padded slots are
+        masked out, and the sum runs over the trailing two axes.
+        """
+        s = term_state
+        nbr_idx = s.neighbor_idx  # [P, N, max_nbr] int32
+        nbr_mask = s.neighbor_mask  # [P, N, max_nbr] bool
+
+        # Pair distances along the neighbour axis without a [P, N, N] tensor.
+        coords_j = _take_3d(coords, nbr_idx)
+        coords_i = coords[:, :, None, :]
+        diff = coords_i - coords_j
+        dist_sq = jnp.sum(diff * diff, axis=-1)  # [P, N, max_nbr]
+        safe = dist_sq > 1e-6
+        dist = jnp.where(safe, jnp.sqrt(jnp.where(safe, dist_sq, 1.0)), 0.1)
+
+        # Gather charges along the neighbour axis. e_i broadcasts the
+        # i-side charge across max_nbr; e_j picks the j-side charge at
+        # nbr_idx.
+        e_i = s.charges[:, :, None]  # [P, N, 1]
+        e_j = _take_2d(s.charges, nbr_idx)  # [P, N, max_nbr]
+
+        # bpl_neighbor was gathered host-side in setup so we can pass it
+        # straight to ``elec_pair`` at the NL layout.
+        E_pair = elec_pair(dist, e_i, e_j, s.bpl_neighbor, s)
+
+        # Mask out padded neighbour slots and real-atom rows. The cell
+        # list is already a half-list (j > i), so no triu mask needed
+        # here -- mirrors LJLK.
+        real_i = s.atom_is_real[:, :, None]
+        mask = nbr_mask & real_i
+        E_pair = jnp.where(mask, E_pair, jnp.asarray(0.0, dtype=E_pair.dtype))
+
         score = jnp.sum(E_pair, axis=(-1, -2))
         return {ScoreType.fa_elec: score}
 
