@@ -26,12 +26,60 @@ shared ``tmol_jax.pose.PoseStackBuilder`` which produces JAX arrays).
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import attr
 import numpy as np
 
 
 logger = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------- #
+# BiotitePoseBuildContext (port of upstream PR #361 scaffold)            #
+# --------------------------------------------------------------------- #
+
+
+@attr.s(auto_attribs=True, frozen=True, slots=True)
+class BiotitePoseBuildContext:
+    """Frozen container threaded through the biotite -> PoseStack pipeline.
+
+    Mirrors the upstream ``tmol.io.pose_stack_from_biotite.BiotitePoseBuildContext``
+    dataclass introduced in PR #361. Holds the (possibly ligand-extended)
+    chemical database + canonical-ordering + packed-block-types triple
+    plus the structured canonical-form dict that
+    :func:`pose_stack_from_canonical_form` consumes.
+
+    Fields
+    ------
+    chem_db:
+        :class:`tmol_jax.database.chemical.ChemicalDatabase` — extended
+        with ligand atom_types + residues if ``ligand_params_files``
+        was supplied to :func:`build_context_from_biotite`.
+    canonical_ordering:
+        :class:`tmol_jax.io.canonical_ordering.CanonicalOrdering`. The
+        scaffold uses the default 20-AA ordering even when ligands are
+        supplied — extending the ordering to include the ligand restype
+        is deferred to a follow-up (see ``tmol_jax/ligand/__init__.py``).
+    packed_block_types:
+        :class:`tmol_jax.pose.packed_block_types.PackedBlockTypes`.
+        Same caveat as ``canonical_ordering``.
+    canonical_form:
+        The canonical-form dict returned by
+        :func:`canonical_form_from_biotite` (numpy arrays keyed by
+        ``chain_id`` / ``res_types`` / ``coords`` / etc.).
+    ligand_params_files:
+        Tuple of :class:`tmol_jax.ligand.params_file.LigandParamsFile`
+        objects parsed from ``ligand_params_files``, or ``()``. Held so
+        downstream callers can pick up per-atom partial charges and
+        bonded params without re-parsing.
+    """
+
+    chem_db: Any
+    canonical_ordering: Any
+    packed_block_types: Any
+    canonical_form: Dict[str, Any]
+    ligand_params_files: Tuple[Any, ...] = ()
 
 
 # --------------------------------------------------------------------- #
@@ -341,6 +389,161 @@ def _break_connections_for_missing_density(
 # --------------------------------------------------------------------- #
 
 
+def _filter_supported_atoms_and_connectivity(
+    atoms: Any,
+    co: Any,
+    extra_known_residues: Sequence[str] = (),
+) -> Any:
+    """Drop residues whose 3-letter code is not in ``co`` or in
+    ``extra_known_residues``.
+
+    Scaffold port of the upstream helper of the same name. The upstream
+    version also prunes residues missing mainchain atoms and rewrites
+    inter-residue connectivity. The jtmol scaffold only does the 3lc
+    filter (which is what :func:`canonical_form_from_biotite` already
+    does implicitly via :func:`_lookup_canonical_atom_index`). It is
+    exposed as a standalone helper so the ligand path can ask "is this
+    PDB after-filtering still non-empty?" without re-running the full
+    canonical-form construction.
+
+    Mainchain-completeness pruning is **deferred**: it currently lives
+    inside ``canonical_form_from_biotite`` as an "atom drop" rather than
+    "residue drop". See ``# ponytail`` note below.
+    """
+    mod = _require_biotite()
+
+    known: set = set(getattr(co, "restype_io_equiv_classes", ()) or ())
+    known.update(extra_known_residues)
+
+    template = atoms[0] if isinstance(atoms, mod.AtomArrayStack) else atoms
+    res_names_arr = np.asarray(template.res_name)
+    keep = np.array(
+        [str(r) in known and str(r) != "HOH" for r in res_names_arr],
+        dtype=bool,
+    )
+    # ponytail: residue-level mainchain-completeness pruning deferred;
+    # upstream's version inspects each residue's mainchain set and drops
+    # the whole row if any mainchain atom is missing. Add when a
+    # parity-regression PDB demonstrates the need.
+    return atoms[..., keep]
+
+
+def _derived_types_for_param_db(
+    chem_db: Any,
+    ligand_params_files: Sequence[Any],
+    *,
+    strict_atom_types: bool = False,
+) -> Tuple[Any, Tuple[Any, ...], Tuple[str, ...]]:
+    """Return ``(extended_chem_db, parsed_params_files, ligand_3lcs)``.
+
+    Pure scaffold: delegates to
+    :func:`tmol_jax.ligand.params_io.extend_db_from_yaml` and surfaces
+    the per-residue ``name3`` values so callers can extend their
+    canonical-ordering palettes.
+
+    Marked with a ``ponytail`` comment because the heavy version
+    upstream uses RDKit + SMARTS atom typing; this scaffold only
+    accepts pre-baked YAML and leaves the RDKit path explicitly
+    unsupported.
+    """
+    # ponytail: RDKit-driven atom typing path skipped; see ligand/__init__.py
+    # for the deferred-work note.
+    from tmol_jax.ligand.params_io import extend_db_from_yaml
+
+    extended, parsed = extend_db_from_yaml(
+        chem_db, ligand_params_files, strict_atom_types=strict_atom_types
+    )
+    ligand_3lcs: List[str] = []
+    seen: set = set()
+    for lp in parsed:
+        for res in lp.residues:
+            if res.name3 not in seen:
+                seen.add(res.name3)
+                ligand_3lcs.append(res.name3)
+    return extended, parsed, tuple(ligand_3lcs)
+
+
+def build_context_from_biotite(
+    biotite_structure: Any,
+    *,
+    canonical_ordering: Optional[Any] = None,
+    packed_block_types: Optional[Any] = None,
+    chem_db: Optional[Any] = None,
+    missing_density_distance_threshold: float = 2.4,
+    prepare_ligands: bool = False,
+    ligand_ph: float = 7.0,
+    strict_atom_types: bool = False,
+    ligand_params_files: Optional[Sequence[Any]] = None,
+) -> "BiotitePoseBuildContext":
+    """Build a :class:`BiotitePoseBuildContext` from a biotite structure.
+
+    The single seam where the ligand path plugs in. Mirrors the upstream
+    PR #361 signature:
+
+    * ``ligand_params_files`` — list of ``.xtal-lig.mmff94.tmol`` YAML
+      files. When supplied, the returned context's ``chem_db`` is
+      extended with the parsed atom_types + residues. **RDKit-free.**
+    * ``prepare_ligands`` — when ``True``, upstream runs the
+      RDKit/SMARTS/dimorphite pipeline. jtmol does not vendor RDKit, so
+      this raises ``NotImplementedError`` and tells the caller to pre-
+      bake the YAML instead.
+    * ``ligand_ph`` / ``strict_atom_types`` — accepted for signature
+      parity. ``ligand_ph`` is unused without ``prepare_ligands=True``;
+      ``strict_atom_types`` is forwarded to
+      :func:`extend_db_from_yaml`.
+    """
+    _require_biotite()
+
+    if prepare_ligands:
+        # ponytail: RDKit-only; SMARTS atom typing + 3D bond perception
+        # have no JAX-friendly substitute, so we hard-fail with a clear
+        # message rather than silently degrade.
+        raise NotImplementedError(
+            "prepare_ligands=True requires RDKit (SMARTS atom typing and "
+            "3D bond perception); jtmol does not vendor RDKit. Pre-bake "
+            "the ligand restype with upstream tmol and pass it via "
+            "ligand_params_files=[...]."
+        )
+
+    parsed_files: Tuple[Any, ...] = ()
+    extra_3lcs: Tuple[str, ...] = ()
+    if ligand_params_files:
+        chem_db, parsed_files, extra_3lcs = _derived_types_for_param_db(
+            chem_db,
+            ligand_params_files,
+            strict_atom_types=strict_atom_types,
+        )
+
+    co = canonical_ordering or canonical_ordering_for_biotite()
+    pbt = packed_block_types or packed_block_types_for_biotite()
+
+    # ponytail: extending `co` + `pbt` with the ligand restypes is the
+    # next rung — see tmol_jax/ligand/__init__.py for the deferred-work
+    # note. For now the canonical-form ignores ligand residues (they
+    # land in the "unrecognised" bucket the existing loop already
+    # handles) but the params payload is available on the returned
+    # context for downstream code that wants to score the ligand.
+
+    cf = canonical_form_from_biotite(
+        biotite_structure,
+        co=co,
+        missing_density_distance_threshold=missing_density_distance_threshold,
+    )
+
+    if chem_db is None:
+        from tmol_jax.database.chemical import ChemicalDatabase as _CD
+
+        chem_db = _CD.get_default()
+
+    return BiotitePoseBuildContext(
+        chem_db=chem_db,
+        canonical_ordering=co,
+        packed_block_types=pbt,
+        canonical_form=cf,
+        ligand_params_files=parsed_files,
+    )
+
+
 def pose_stack_from_biotite(
     biotite_structure: Any,
     *,
@@ -492,4 +695,6 @@ __all__ = [
     "canonical_form_from_biotite",
     "canonical_ordering_for_biotite",
     "packed_block_types_for_biotite",
+    "BiotitePoseBuildContext",
+    "build_context_from_biotite",
 ]
