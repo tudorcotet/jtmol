@@ -226,11 +226,16 @@ def bench_one_pose(pdb_label: str = "1ubq") -> dict:
             torch.cuda.synchronize() if torch.cuda.is_available() else None
         torch.cuda.synchronize() if torch.cuda.is_available() else None
 
-        # single-pose timing
+        # single-pose timing. Forward measured under no_grad so upstream
+        # does not build an autograd tape it never uses -- jtmol's forward
+        # path (batched_energy) builds no tape either, so this keeps the
+        # forward-vs-forward comparison fair. Gradient timing below keeps
+        # grad enabled on both sides.
         t0 = time.perf_counter()
-        for _ in range(N_REPEATS):
-            e = up_energy(base_t)
-            torch.cuda.synchronize() if torch.cuda.is_available() else None
+        with torch.no_grad():
+            for _ in range(N_REPEATS):
+                e = up_energy(base_t)
+                torch.cuda.synchronize() if torch.cuda.is_available() else None
         up_single_e = (time.perf_counter() - t0) / N_REPEATS * 1000
 
         t0 = time.perf_counter()
@@ -262,12 +267,13 @@ def bench_one_pose(pdb_label: str = "1ubq") -> dict:
                     _ = up_energy(c)
                 torch.cuda.synchronize() if torch.cuda.is_available() else None
 
-                # E loop
+                # E loop (forward-only, no autograd tape)
                 t0 = time.perf_counter()
-                for _ in range(N_REPEATS):
-                    for c in coord_batch:
-                        _ = up_energy(c)
-                    torch.cuda.synchronize() if torch.cuda.is_available() else None
+                with torch.no_grad():
+                    for _ in range(N_REPEATS):
+                        for c in coord_batch:
+                            _ = up_energy(c)
+                        torch.cuda.synchronize() if torch.cuda.is_available() else None
                 e_ms = (time.perf_counter() - t0) / N_REPEATS * 1000
 
                 # grad loop
@@ -609,11 +615,15 @@ def bench_size_sweep(k: int = 128, use_neighbor_list: bool = False) -> dict:
             # single-pose upstream (loop K times). Cap upstream's K at min(k, 32)
             # for big proteins to stay under the 90 min function timeout.
             up_k = min(k, 16) if n_atoms > 6000 else min(k, 64)
+            # Forward measured under no_grad: upstream otherwise builds an
+            # autograd tape on every forward call that it never uses, which
+            # inflates the forward time vs jtmol's tape-free forward path.
             t0 = time.perf_counter()
-            for _ in range(3):
-                for _ in range(up_k):
-                    _ = scorer(base_t).sum()
-                torch.cuda.synchronize()
+            with torch.no_grad():
+                for _ in range(3):
+                    for _ in range(up_k):
+                        _ = scorer(base_t).sum()
+                    torch.cuda.synchronize()
             up_e_ms = (time.perf_counter() - t0) / 3 * 1000 / up_k
 
             t0 = time.perf_counter()
