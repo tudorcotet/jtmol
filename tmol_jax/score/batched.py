@@ -134,11 +134,13 @@ def batched_value_and_grad(
     state: Optional[Any] = None,
     chunk_size: int = 16,
     score_dtype: Any = jnp.float32,
+    chunking_mode: str = "lax_map",
 ) -> Callable[[jax.Array], tuple]:
     """Like :func:`batched_energy` but returns ``(energies, grad_coords)``.
 
     Useful for training loops that want per-pose energy and the gradient
-    w.r.t. coords in one pass.
+    w.r.t. coords in one pass. ``chunking_mode`` matches
+    :func:`batched_energy`.
     """
     if state is None:
         state = sfxn.setup_for_pose_stack(pose_stack)
@@ -151,8 +153,35 @@ def batched_value_and_grad(
 
     vg_single = jax.value_and_grad(single)
 
-    def fn(coords_batch: jax.Array) -> tuple:
-        return jax.lax.map(vg_single, coords_batch, batch_size=chunk_size)
+    if chunking_mode == "lax_map":
+        def fn(coords_batch: jax.Array) -> tuple:
+            return jax.lax.map(vg_single, coords_batch, batch_size=chunk_size)
+    elif chunking_mode == "python":
+        chunked_vmap = jax.jit(jax.vmap(vg_single))
+
+        def fn(coords_batch: jax.Array) -> tuple:
+            K = int(coords_batch.shape[0])
+            if K <= chunk_size:
+                return chunked_vmap(coords_batch)
+            vals, grads = [], []
+            for i in range(0, K, chunk_size):
+                chunk = coords_batch[i : i + chunk_size]
+                if chunk.shape[0] < chunk_size:
+                    pad = chunk_size - chunk.shape[0]
+                    chunk = jnp.concatenate(
+                        [chunk, jnp.broadcast_to(chunk[:1], (pad,) + chunk.shape[1:])],
+                        axis=0,
+                    )
+                    v, g = chunked_vmap(chunk)
+                    vals.append(v[: chunk_size - pad])
+                    grads.append(g[: chunk_size - pad])
+                else:
+                    v, g = chunked_vmap(chunk)
+                    vals.append(v)
+                    grads.append(g)
+            return jnp.concatenate(vals, axis=0), jnp.concatenate(grads, axis=0)
+    else:
+        raise ValueError(f"chunking_mode must be 'lax_map' or 'python', got {chunking_mode!r}")
 
     return fn
 

@@ -502,12 +502,16 @@ def _adaptive_chunk_size(n_atoms: int) -> int:
 
 
 @app.function(gpu="A100-40GB", timeout=60 * 90)
-def bench_size_sweep(k: int = 128) -> dict:
+def bench_size_sweep(k: int = 128, use_neighbor_list: bool = False) -> dict:
     """Per-pose throughput across protein sizes (75-600 residues).
 
     Uses upstream tmol's size-graded test fixtures so results are
     reproducible from the same wheel + git clone. chunk_size is
     adapted to N to keep dense pair memory bounded.
+
+    Pass ``use_neighbor_list=True`` to enable the LJLK + elec NL paths;
+    that flips ``chunking_mode`` to ``python`` because lax.map + NL
+    triggers an XLA autotuner workspace blow-up on GPU.
     """
     import os, sys, time, traceback
     target = "/root/jtmol/tmol"
@@ -523,13 +527,14 @@ def bench_size_sweep(k: int = 128) -> dict:
     import numpy as np
     import torch
 
-    out: dict = {"k": k, "rows": [], "errors": [], "device": "unknown"}
+    out: dict = {"k": k, "rows": [], "errors": [], "device": "unknown", "use_neighbor_list": use_neighbor_list}
     if torch.cuda.is_available():
         out["device"] = torch.cuda.get_device_name(0)
 
     import tmol_jax
     from tmol_jax import beta2016_score_function
     from tmol_jax.score import batched_energy
+    chunking_mode = "python" if use_neighbor_list else "lax_map"
 
     import tmol
     from tmol import pose_stack_from_pdb as up_pose_stack
@@ -549,7 +554,7 @@ def bench_size_sweep(k: int = 128) -> dict:
             chunk = _adaptive_chunk_size(n_atoms)
             print(f"[{label}] n_atoms={n_atoms}, chunk_size={chunk}", flush=True)
 
-            sfxn = beta2016_score_function()
+            sfxn = beta2016_score_function(use_neighbor_list=use_neighbor_list)
             state = sfxn.setup_for_pose_stack(jpose)
             base = jnp.asarray(jpose.coords)
 
@@ -558,8 +563,11 @@ def bench_size_sweep(k: int = 128) -> dict:
             batch = base[None] + noise
 
             from tmol_jax.score import batched_value_and_grad
-            bfn_e = jax.jit(batched_energy(sfxn, jpose, state=state, chunk_size=chunk, score_dtype=jnp.float32))
-            bfn_g = jax.jit(batched_value_and_grad(sfxn, jpose, state=state, chunk_size=chunk, score_dtype=jnp.float32))
+            bfn_e = batched_energy(sfxn, jpose, state=state, chunk_size=chunk, score_dtype=jnp.float32, chunking_mode=chunking_mode)
+            bfn_g = batched_value_and_grad(sfxn, jpose, state=state, chunk_size=chunk, score_dtype=jnp.float32, chunking_mode=chunking_mode)
+            if chunking_mode == "lax_map":
+                bfn_e = jax.jit(bfn_e)
+                bfn_g = jax.jit(bfn_g)
 
             jax.block_until_ready(bfn_e(batch))
             jax.block_until_ready(bfn_g(batch))
@@ -663,13 +671,14 @@ def _format_size_sweep_md(result: dict) -> str:
 
 
 @app.local_entrypoint()
-def run_size_sweep(k: int = 128):
-    result = bench_size_sweep.remote(k)
+def run_size_sweep(k: int = 128, nl: bool = False):
+    result = bench_size_sweep.remote(k, nl)
     md = _format_size_sweep_md(result)
     print()
     print(md)
     repo = pathlib.Path(__file__).resolve().parents[1]
-    out_path = repo / "docs" / "BENCHMARKS_SIZE.md"
+    out_name = "BENCHMARKS_SIZE_NL.md" if nl else "BENCHMARKS_SIZE.md"
+    out_path = repo / "docs" / out_name
     out_path.write_text(md)
     print(f"\nwrote {out_path}")
 
