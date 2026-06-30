@@ -47,6 +47,16 @@ Requires Python ≥ 3.10 and JAX ≥ 0.4.30. PyTorch is not needed at
 runtime, only optionally for regenerating binary scoring tables via
 `scripts/convert_binary_tables.py`.
 
+For protein-ligand support (loading complexes with small-molecule
+ligands), install the optional `ligand` extra, which pulls in RDKit:
+
+```bash
+uv pip install -e '.[ligand]'
+```
+
+See [Protein-ligand status](#protein-ligand-status) for what this
+currently covers.
+
 ## Benchmarks
 
 Head-to-head against the upstream `tmol-0.1.22+cu128torch2.10` wheel on
@@ -120,8 +130,39 @@ with reproducers and workarounds; each one drives a category of
 | `tmol_jax.optimization` | L-BFGS, Cartesian and kinematic |
 | `tmol_jax.pack` | Rotamer packer (Metropolis-MC over jitted score) |
 | `tmol_jax.relax` | FastRelax |
-| `tmol_jax.io` | PDB read/write, canonical ordering |
+| `tmol_jax.io` | PDB read/write, canonical ordering, biotite + ligand pose construction |
+| `tmol_jax.ligand` | Ligand params-file (`.tmol`) parsing (optional `ligand` extra) |
 | `examples/integration_mosaic_hallucinator.py` | `LossTerm` wrappers for [mosaic](https://github.com/escalante-bio/mosaic) / Boltz-2 hallucination |
+
+## Protein-ligand status
+
+jtmol can load a protein-ligand complex and place the ligand in the
+`PoseStack` given a precomputed upstream `.tmol` params file, and score
+the ligand's Lennard-Jones / Lennard-Kihara contributions. Verified on
+the cdk2 complex (280 residues): the ligand block is constructed with
+its 28 atoms at crystal coordinates, all atom types resolve to
+generic-potential LJ/LK parameters, and protein-only parity is
+unchanged (panel snapshot passes).
+
+What works:
+
+- `pose_stack_from_biotite(atoms, ligand_params_files=[...])` builds a
+  `PoseStack` containing the ligand residue.
+- Generic-potential ligand atom types (`CR`, `Nim`, `ClR`, …) carry
+  LJ/LK parameters in `chemical.yaml` + `ljlk.yaml`, ported verbatim
+  from upstream PR #361.
+
+What is not done yet (each scoped, none silently approximated):
+
+- **Ligand electrostatics**: the `.tmol` partial charges parse but are
+  not yet wired into `fa_elec` (ligand contributes 0 to elec).
+- **Ligand hydrogen bonds**: donor/acceptor flags and the `hbond.yaml`
+  generic block are not ported (ligand contributes 0 to hbond).
+- **Atom typing from raw inputs**: turning a raw MOL2/SDF/SMILES into a
+  `.tmol` params file requires the RDKit-based typing pipeline
+  (upstream's ~1568-line `atom_typing.py`); `prepare_ligands=True`
+  raises `NotImplementedError`. Until then, supply upstream's
+  precomputed `.tmol` params files.
 
 ## A few common recipes
 
