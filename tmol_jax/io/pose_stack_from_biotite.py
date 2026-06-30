@@ -502,6 +502,19 @@ def _extended_co_pbt_for_ligands(
     # PackedBlockTypes: default 20-AA + variant palette, then ligands.
     base_pbt = PackedBlockTypes.default()
     ligand_refined = [_refined_from_raw(r) for r in ligand_raws]
+
+    # Carry per-atom partial charges (parsed from the ``.tmol`` elec
+    # block) on each ligand RefinedResidueType so the fa_elec term picks
+    # them up via ``_charges_for_block_type``. Keyed {res_name: {atom: q}}.
+    ligand_charges: Dict[str, Dict[str, float]] = {}
+    for lp in parsed_files:
+        for (res_name, atom_name), q in getattr(lp, "atom_charges", {}).items():
+            ligand_charges.setdefault(res_name, {})[atom_name] = float(q)
+    for rr in ligand_refined:
+        q = ligand_charges.get(rr.name) or ligand_charges.get(rr.name3)
+        if q:
+            rr.elec_partial_charges = q
+
     pbt = PackedBlockTypes.from_restypes(
         base_pbt.chem_db,
         list(base_pbt.active_block_types) + ligand_refined,
