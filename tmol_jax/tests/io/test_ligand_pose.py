@@ -175,3 +175,48 @@ if __name__ == "__main__":  # pragma: no cover - manual driver
             print(f"FAIL  {fn.__name__}: {exc!r}")
             failed.append(fn.__name__)
     sys.exit(1 if failed else 0)
+
+
+def test_ligand_participates_in_hbond() -> None:
+    """The ligand's polar atoms are classified as donors/acceptors and
+    contribute to the hbond term.
+
+    The generic-potential atom types carry ``is_donor`` / ``is_acceptor``
+    flags in ``chemical.yaml``, and ``hbond.yaml`` has the generic
+    donor/acceptor type mappings + polynomials. So LG1's N/O atoms can
+    form hydrogen bonds. We assert (1) the LG1 restype has at least one
+    donor or acceptor atom, and (2) the complex hbond total is finite.
+    Protein-hbond parity is covered separately by the panel snapshot.
+    """
+    import tmol_jax
+    from tmol_jax.database import ParameterDatabase
+    from tmol_jax.io.pose_stack_from_biotite import (
+        build_context_from_biotite,
+        pose_stack_from_biotite,
+    )
+    from tmol_jax.score.score_types import ScoreType
+
+    atoms = _load_atoms()
+    ctx = build_context_from_biotite(atoms, ligand_params_files=[_TMOL])
+    pbt = ctx.packed_block_types
+    lg1 = {bt.name: bt for bt in pbt.active_block_types}["LG1"]
+
+    # The hbond term classifies donors/acceptors by atom-type NAME against
+    # the chemical database (not the per-restype atom flags, which the
+    # .tmol parser leaves False). Check LG1's atom types there.
+    chem_flags = {
+        at.name: (getattr(at, "is_donor", False), getattr(at, "is_acceptor", False))
+        for at in ParameterDatabase.get_default().chemical.atom_types
+    }
+    lg1_types = [a.atom_type for a in lg1.atoms]
+    n_polar = sum(1 for t in lg1_types if any(chem_flags.get(t, (False, False))))
+    assert n_polar > 0, (
+        "LG1 has no donor/acceptor atom types in the chemical db -- "
+        f"ligand cannot hbond (types={sorted(set(lg1_types))})"
+    )
+
+    ps = pose_stack_from_biotite(atoms, ligand_params_files=[_TMOL])
+    sfxn = tmol_jax.beta2016_score_function()
+    per = sfxn.score_by_term(ps)
+    hb = float(np.asarray(per[ScoreType.hbond]).sum())
+    assert np.isfinite(hb), f"hbond total not finite: {hb}"
