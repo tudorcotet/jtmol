@@ -40,42 +40,39 @@ would be a much bigger lift without it.
 compile per GPU architecture, no `ninja` / `nvcc` at install time.
 Works wherever JAX installs.
 
-## What we've measured
+## What's been measured
 
-Apples-to-apples on CPU (M3 Max, 1ubq, 1228 atoms):
+Head-to-head on A100-40GB with the upstream PyTorch wheel
+(`tmol-0.1.22+cu128torch2.10`) and the JAX port at parity. Same
+protein, same energy function (`beta_nov2016_cart`, 22 channels),
+K=128 perturbed poses per call. Full details:
+[BENCHMARKS.md](BENCHMARKS.md), [EXPERIMENT_LOG.md](EXPERIMENT_LOG.md).
 
-| Operation | dense | neighbor list |
-|---|---:|---:|
-| Single energy | 8.9 ms | 1.5 ms |
-| Single gradient | 8.7 ms | 3.3 ms |
-| Intermediate memory | 5.78 MiB | 457 KiB |
+Per-pose latency across protein size, neighbor-list path on LJLK,
+elec, and lk_ball:
 
-The neighbor-list path (cell list, 6 Å cutoff) iterates real pairs
-only; the dense path builds the full `[N, N]` distance matrix and
-becomes infeasible past ~5000 atoms, where the NL path keeps scaling
-linearly.
+| residues | atoms | jtmol fwd (ms/pose) | upstream fwd | speedup | jtmol grad | upstream grad | speedup |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+|  75 | 1116 | 0.25 | 28.3 | 111× | 1.17 | 31.5 | 27× |
+| 200 | 3039 | 1.00 | 28.9 |  29× | 4.47 | 34.2 |  8× |
+| 600 | 8800 | 1.41 | 28.8 |  20× | 13.9 | 32.5 |  2× |
 
-Scoring 100 perturbed 1ubq conformations on CPU:
+Per-pose forward latency stays under 1.5 ms across an 8× range of
+protein size. Upstream stays at ~30 ms because Python + PyTorch
+op-dispatch overhead dominates compute at every size tested. The
+speedup is from JIT compilation collapsing all 22 channels into a
+single XLA program (one kernel launch per call) rather than the
+~200 separate ops PyTorch dispatches per scorer call. Detailed
+analysis in [EXPERIMENT_LOG.md](EXPERIMENT_LOG.md).
 
-| Approach | Wall time | Per-pose |
-|---|---:|---:|
-| Python `for` loop | ~150 ms | 1.5 ms |
-| `jax.vmap(jit(sfxn))` | ~5–10 ms | 0.05–0.1 ms |
+## Where upstream still beats jtmol
 
-On GPU the vmap collapses to a single kernel launch over the batch
-dim, so per-pose cost goes nearly flat as batch size grows. We
-haven't benchmarked the full GPU sweep yet — when we do we'll add it
-here.
-
-## Where jtmol still loses to upstream
-
-- **Single-structure peak throughput on a hand-tuned CUDA GPU.**
-  Upstream's register-level shared-memory kernels are 2–3× faster
-  than the vmap-of-dense path for one giant pose with no batch. The
-  neighbor-list path narrows this but doesn't yet close it.
-- **Mature rotamer packer with interaction-graph caching.** Our
+- **Larger structures (>2000 residues).** Once upstream's GPU compute
+  exceeds the dispatch ceiling, its hand-tuned tiled CUDA kernels
+  start to dominate. The sweep above does not reach this regime.
+- **Mature rotamer packer with interaction-graph caching.** jtmol's
   packer is direct Metropolis-MC. Correct, but upstream has years of
-  C++ tuning we don't.
+  C++ tuning that jtmol's pure-JAX packer does not.
 
 ## Parity
 

@@ -6,12 +6,11 @@ energy function from the Baker Lab. Upstream is PyTorch with
 hand-written C++/CUDA kernels; jtmol replaces both with `jit`, `vmap`,
 `lax.scan`, and `jax.grad` over pure Python.
 
-The point of the port is to make Rosetta scoring composable with the
-rest of the JAX ML stack (Boltz-2, mosaic, AlphaFold, ESM, etc.) so
-you can use Rosetta energies as a differentiable loss in protein
-design loops without the autograd-boundary friction of going through
-torch. We use it as a binding-affinity loss inside mosaic binder
-hallucination, see
+The port makes Rosetta scoring composable with the rest of the JAX ML
+stack (Boltz-2, mosaic, AlphaFold, ESM, etc.) so Rosetta energies can
+act as a differentiable loss in protein design loops without the
+autograd-boundary friction of going through torch. The integration
+with mosaic binder hallucination is described in
 [`docs/MOSAIC_INTEGRATION.md`](docs/MOSAIC_INTEGRATION.md).
 
 The Python import path is `tmol_jax` (kept for parity with upstream);
@@ -48,35 +47,67 @@ Requires Python ≥ 3.10 and JAX ≥ 0.4.30. PyTorch is not needed at
 runtime, only optionally for regenerating binary scoring tables via
 `scripts/convert_binary_tables.py`.
 
-## Status
+## Benchmarks
+
+Head-to-head against the upstream `tmol-0.1.22+cu128torch2.10` wheel on
+a single A100-40GB. Both backends evaluate the full
+`beta_nov2016_cart` (22 channels) on the same protein. K=128 perturbed
+poses per call. jtmol uses `jax.lax.map`-chunked vmap with `chunk_size`
+adapted to N, and the neighbor-list path on LJLK, elec, and lk_ball.
+Upstream is the live PyTorch wheel doing K serial scorings.
+
+![jtmol vs upstream tmol speedup](docs/figures/jtmol_vs_tmol.png)
+
+| Protein size | jtmol forward (ms/pose) | upstream forward | speedup | jtmol gradient | upstream gradient | speedup |
+|---:|---:|---:|---:|---:|---:|---:|
+| 75 res | 0.25 | 28.3 | **111×** | 1.17 | 31.5 | **27×** |
+| 200 res | 1.00 | 28.9 | 29× | 4.47 | 34.2 | 7.6× |
+| 600 res | 1.41 | 28.8 | **20×** | 13.9 | 32.5 | **2.3×** |
+
+Two structural reasons for the gap:
+
+1. **One XLA kernel per call**, not ~200. `jax.jit` fuses all 22
+   channels into a single launch. Upstream evaluates each channel as a
+   separate PyTorch op; per-call dispatch overhead dominates compute
+   for every protein size in the sweep, which is why upstream stays at
+   ~30 ms regardless of N.
+2. **Pair work is O(N · k_max)**, not O(N²). Each big pair term
+   (LJLK, elec, lk_ball) has its own cell list, opt in via
+   `beta2016_score_function(use_neighbor_list=True)`. Bit-identical on
+   1ubq to the dense path.
+
+Full methodology, dispatch-vs-compute analysis, and parity caveats:
+[`docs/EXPERIMENT_LOG.md`](docs/EXPERIMENT_LOG.md). Per-run raw
+numbers: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+
+## Parity
 
 On 1ubq, forward energies match upstream's per-term goldens across all
 20 score channels of `beta_nov2016_cart`, and `jax.grad` matches
 central finite-difference of upstream's own forward to ~1e-9 in
 float64. The single-chain multi-PDB panel (1qys, 1r21, 3plc, 6DMZ_A)
 matches upstream on most channels with small drifts on the rotamer
-library terms (`dunbrack_rotdev` / `dunbrack_semirot`, where we use
-bilinear interpolation vs upstream's bicubic B-spline). Multi-chain
-interface PDBs (1CGI, 1PRG, 7OPB) currently concatenate chains into a
-single PoseStack rather than detecting the inter-chain break, so
-inter-chain totals diverge from upstream there — known gap, tracked
-in [`docs/MULTI_CHAIN_PARITY.md`](docs/MULTI_CHAIN_PARITY.md). The
-per-term table and full caveats live in [`docs/PARITY.md`](docs/PARITY.md).
+library terms (`dunbrack_rotdev` / `dunbrack_semirot`, where jtmol
+uses bilinear interpolation vs upstream's bicubic B-spline). Multi-
+chain interface PDBs (1CGI, 1PRG, 7OPB) currently concatenate chains
+into a single PoseStack rather than detecting the inter-chain break,
+so inter-chain totals diverge from upstream there: a known gap,
+tracked in [`docs/MULTI_CHAIN_PARITY.md`](docs/MULTI_CHAIN_PARITY.md).
+The per-term table and full caveats live in
+[`docs/PARITY.md`](docs/PARITY.md).
 
-One thing worth flagging: while running the gradient sweep we found
-that upstream's hand-written CUDA adjoint for `lk_bridge_uncpl`
-disagrees with finite-difference of its own forward at sp2 backbone-O
-acceptors, by up to 0.16 kcal/mol/Å on the carbonyl O atoms of GLN-1
-and GLN-61 on 1ubq. jtmol's `jax.grad` matches FD to 1e-9 there.
-Reproducer and analysis in
+One channel worth flagging: upstream's hand-written CUDA adjoint for
+`lk_bridge_uncpl` disagrees with finite-difference of its own forward
+at sp2 backbone-O acceptors, by up to 0.16 kcal/mol/Å on the carbonyl
+O atoms of GLN-1 and GLN-61 on 1ubq. jtmol's `jax.grad` matches FD to
+1e-9 there. Reproducer and analysis in
 [`docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md`](docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md).
-We haven't filed it upstream yet.
 
-That was the first of six upstream bugs we have catalogued while
-building jtmol. The full list is in
-[`docs/UPSTREAM_BUGS.md`](docs/UPSTREAM_BUGS.md) with reproducers and
-workarounds; each one drives a category of "expected mismatch" cell
-in the parity matrix at [`docs/UPSTREAM_PARITY.md`](docs/UPSTREAM_PARITY.md).
+That is the first of six upstream bugs catalogued while building
+jtmol. The full list is in [`docs/UPSTREAM_BUGS.md`](docs/UPSTREAM_BUGS.md)
+with reproducers and workarounds; each one drives a category of
+"expected mismatch" cell in the parity matrix at
+[`docs/UPSTREAM_PARITY.md`](docs/UPSTREAM_PARITY.md).
 
 ## What's in the package
 
@@ -137,7 +168,7 @@ Es        = batched_E(batch_coords)           # [64]
 ```
 
 This is the move that justifies the port. Upstream needs a Python
-loop over the batch dim; we get one XLA-compiled kernel.
+loop over the batch dim; jtmol gets one XLA-compiled kernel.
 
 ### As a binding-affinity loss inside protein hallucination
 
@@ -156,12 +187,12 @@ Boltz-2 losses via `+` / `*`.
 | [`docs/MULTI_CHAIN_PARITY.md`](docs/MULTI_CHAIN_PARITY.md) | Multi-chain / interface PDBs |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Package layout and pytree design |
 | [`docs/PHYSICS.md`](docs/PHYSICS.md) | The 20 energy channels, in one page |
-| [`docs/WHY_JAX.md`](docs/WHY_JAX.md) | Why we re-implemented this in JAX |
+| [`docs/WHY_JAX.md`](docs/WHY_JAX.md) | Rationale for the JAX rewrite |
 | [`docs/PORT_NOTES.md`](docs/PORT_NOTES.md) | Gaps and behavioural differences vs upstream |
 | [`docs/MOSAIC_INTEGRATION.md`](docs/MOSAIC_INTEGRATION.md) | Use jtmol as a binding-affinity loss in mosaic / Boltz-2; affinity-tuning recipe |
 | [`docs/EXTRA_SCORES.md`](docs/EXTRA_SCORES.md) | Extra differentiable interface scores (SS99, TransComp, BUH, PRODIGY, DFIRE) and the three-channel KineticsTuningLoss |
 | [`docs/UPSTREAM_ALIGNMENT.md`](docs/UPSTREAM_ALIGNMENT.md) | Systematic diff of jtmol vs `uw-ipd/tmol` `origin/master` — YAML constants, cutoffs, loaders, sfxn weights; one open divergence (`gen_torsions`) |
-| [`docs/UPSTREAM_BUGS.md`](docs/UPSTREAM_BUGS.md) | Catalogue of every upstream tmol bug we found while building jtmol (6 distinct issues + 1 divergence, each with a reproducer) |
+| [`docs/UPSTREAM_BUGS.md`](docs/UPSTREAM_BUGS.md) | Catalogue of upstream tmol bugs surfaced by the port (6 distinct issues + 1 divergence, each with a reproducer) |
 | [`docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md`](docs/UPSTREAM_BUG_LK_BRIDGE_UNCPL.md) | The first-found `lk_bridge_uncpl` adjoint bug, full reproducer |
 
 ### Worked examples
