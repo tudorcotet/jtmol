@@ -229,19 +229,46 @@ The pieces that made the bench possible:
    channel that requires it for numerical parity). Matches the
    NequIP / MACE recipe.
 
-## Limitations
+## Scope and limitations
 
-* All numbers are forward/gradient throughput on a single host. Not
-  measured: full training loops, dataloader overhead, optimizer step
-  cost, real RL rollout cost.
-* The size sweep stops at 600 residues. Larger structures
-  (multi-domain antibodies, full nucleosomes, capsids) may move into a
-  regime where upstream's compute dominates dispatch and the gap
-  narrows. Specifically, once protein-side compute exceeds ~30 ms
-  upstream would start to scale with N.
-* Speedup numbers are per-call latency at fixed K. End-to-end
-  application performance depends on K, ratio of scoring to other
-  work, and the cost of host-device transfer outside the bench.
-* Gradient is full reverse-mode autodiff. Custom Jacobian-vector
-  products on specific channels could narrow the per-channel cost
-  further; not measured here.
+**System coverage.** Both backends in this bench support the same
+fundamental scope: single-chain proteins built from the 20 canonical
+amino acids (plus HIS protonation variants, disulfide CYD, terminal
+patches, HOH, and VRT — 29 chemical residue types in
+`chemical.yaml`). The bench evaluates this regime end-to-end.
+
+Other system classes:
+
+* **Protein-protein multi-chain complexes**: supported in the
+  PoseStack layer; inter-chain totals currently diverge from upstream
+  due to chain-break detection (see
+  [`docs/MULTI_CHAIN_PARITY.md`](MULTI_CHAIN_PARITY.md)).
+* **Protein-ligand complexes**: upstream added a full pipeline (RDKit
+  atom typing, SMILES/MOL2/CIF parsing, protein-ligand ΔΔG) in
+  `uw-ipd/tmol` PR #361, merged June 26 2026. The bench in this
+  document predates that PR (built against the `v0.1.22` wheel,
+  released before PR #361). jtmol has partially ported the same PR:
+  the `gen_torsions` math term, `pose_stack_from_biotite.py`, and a
+  vendored `pysmiles` are present, but the full RDKit atom-typing
+  path is not. Head-to-head benchmarking of protein-ligand scoring
+  requires completing the port.
+* **Nucleic acids (DNA, RNA), post-translational modifications
+  (phospho-Ser/Thr/Tyr, methylation, glycans), metal ions**: out of
+  scope on both sides. `beta_nov2016_cart`'s reference implementation
+  in upstream tmol does not include these residue types in
+  `chemical.yaml`; neither does jtmol. Adding any of them requires
+  extending the chemical database and corresponding scoring tables.
+
+**Measurement scope.** All numbers are forward/gradient throughput on
+a single host. Not measured: full training loops, dataloader overhead,
+optimizer step cost, real RL rollout cost, host-device transfer cost
+outside the bench.
+
+**Size envelope.** The size sweep stops at 600 residues. Past
+~2000 residues, upstream's GPU compute would eventually exceed the
+~30 ms dispatch ceiling and the gap would narrow. The sweep does not
+reach that regime.
+
+**Gradient cost.** jtmol gradients are full reverse-mode autodiff.
+Custom Jacobian-vector products on specific channels could narrow the
+per-channel cost further; not measured here.
