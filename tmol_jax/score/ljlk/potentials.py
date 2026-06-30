@@ -38,21 +38,17 @@ from tmol_jax.score.common import connectivity_weight, interpolate, interpolate_
 # Constants                                                                    #
 # --------------------------------------------------------------------------- #
 
-# Far cutoff of the LJ / LK fade polynomial. Both forms zero out above
-# this distance.
-# ponytail: upstream commit 1d7e18c parameterizes this as `max_dis`
-# (read from LJLKGlobalParams.max_dis = 6.0). jtmol keeps the literal;
-# thread from global params if jtmol ever needs a non-default cutoff.
-_CPOLY_DMAX: float = 6.0
-
-# Lower edge of the far cpoly fade, used when ``sigma <= 4.5``.
-_LJ_CPOLY_DMIN_FLOOR: float = 4.5
-# Maximum allowed cpoly_dmin: never get within 0.1 A of cpoly_dmax.
+# Far / near cutoff geometry derives from ``global_params.max_dis``
+# (upstream commit 1d7e18c). The "spline start" is ``max_dis - 1.5``;
+# the linear-extrapolation crossover is ``sigma * lj_dlin_sigma_factor``.
+# Only the hard offset between ``cpoly_dmax`` and the cap on
+# ``cpoly_dmin`` is still a fixed literal (matches upstream's
+# ``Real(0.1)``).
 _LJ_CPOLY_DMIN_MAX_OFFSET: float = 0.1
 
-# LK-specific far-fade bounds.
-_LK_CPOLY_FAR_DMIN: float = 4.5
-_LK_CPOLY_FAR_DMAX: float = _CPOLY_DMAX
+# Width of the far fade (``cpoly_dmax - spline_start``), hard-coded in
+# upstream as ``1.5`` A.
+_FAR_FADE_WIDTH: float = 1.5
 
 # pi^1.5 -- matches the literal in ``lk_isotropic.hh``.
 _PI_POW_1P5: float = 5.56832799683
@@ -219,13 +215,16 @@ def lj_atr_rep(
         jnp.maximum(i_params.lj_wdepth * j_params.lj_wdepth, 1e-12)
     )
 
-    d_lin = sigma * 0.6
-    cpoly_dmax = jnp.asarray(_CPOLY_DMAX, dtype=sigma.dtype)
+    cpoly_dmax = jnp.asarray(global_params.max_dis, dtype=sigma.dtype)
+    spline_start = cpoly_dmax - jnp.asarray(_FAR_FADE_WIDTH, dtype=sigma.dtype)
+    d_lin = sigma * jnp.asarray(
+        global_params.lj_dlin_sigma_factor, dtype=sigma.dtype
+    )
     cpoly_dmin_cap = cpoly_dmax - _LJ_CPOLY_DMIN_MAX_OFFSET
     cpoly_dmin = jnp.where(
-        sigma > _LJ_CPOLY_DMIN_FLOOR,
+        sigma > spline_start,
         jnp.minimum(sigma, cpoly_dmin_cap),
-        jnp.asarray(_LJ_CPOLY_DMIN_FLOOR, dtype=sigma.dtype),
+        spline_start,
     )
 
     # Regions
@@ -359,6 +358,8 @@ def _lk_one_sided_with_fade(
     lk_dgfree_i: jax.Array,
     lk_lambda_i: jax.Array,
     lk_volume_j: jax.Array,
+    cpoly_far_dmax: jax.Array,
+    cpoly_far_dmin: jax.Array,
 ) -> jax.Array:
     """One-direction LK with upstream's full close- and far-cpoly fades.
 
@@ -384,9 +385,6 @@ def _lk_one_sided_with_fade(
     overrides applied) obtained from :func:`lj_sigma`; it is shared
     between the two directions so the caller computes it once.
     """
-    cpoly_far_dmin = jnp.asarray(_LK_CPOLY_FAR_DMIN, dtype=dist.dtype)
-    cpoly_far_dmax = jnp.asarray(_LK_CPOLY_FAR_DMAX, dtype=dist.dtype)
-
     d_min = lj_sigma_ij * 0.89
     # ``sqrt(max(d_min^2 - 1.45, 0.01))`` -- upstream guards negative/zero
     # with a floor of 0.01 (i.e. cpoly_close_dmin >= 0.1).
@@ -466,6 +464,10 @@ def lk_isotropic_pair(
     """
     # Shared across the two directions (sigma is symmetric in i/j).
     sigma = lj_sigma(i_params, j_params, global_params)
+    cpoly_far_dmax = jnp.asarray(global_params.max_dis, dtype=dist.dtype)
+    cpoly_far_dmin = cpoly_far_dmax - jnp.asarray(
+        _FAR_FADE_WIDTH, dtype=dist.dtype
+    )
 
     V_ij = _lk_one_sided_with_fade(
         dist,
@@ -474,6 +476,8 @@ def lk_isotropic_pair(
         i_params.lk_dgfree,
         i_params.lk_lambda,
         j_params.lk_volume,
+        cpoly_far_dmax,
+        cpoly_far_dmin,
     )
     V_ji = _lk_one_sided_with_fade(
         dist,
@@ -482,6 +486,8 @@ def lk_isotropic_pair(
         j_params.lk_dgfree,
         j_params.lk_lambda,
         i_params.lk_volume,
+        cpoly_far_dmax,
+        cpoly_far_dmin,
     )
     V = V_ij + V_ji
 

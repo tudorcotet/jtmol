@@ -77,8 +77,11 @@ def build_cell_list(
         one-time setup step (or recomputable whenever the geometry
         drifts enough to invalidate the current list).
     cutoff
-        Interaction cutoff in Angstroms. Defaults to 6.0, which matches
-        the far cpoly cutoff used by both LJ and LK.
+        Interaction cutoff in Angstroms. Default ``6.0`` matches the
+        legacy LJ / LK far cpoly cutoff, but callers should pass the
+        relevant ``*_max_dis`` global param (e.g.
+        ``LJLKGlobalParams.max_dis`` or ``ElecGlobalParams.elec_max_dis``)
+        so a non-default YAML override propagates end-to-end.
     atom_is_real
         Optional ``bool[P, N]`` mask of real atoms. Padded atoms are
         excluded from the neighbour list entirely.

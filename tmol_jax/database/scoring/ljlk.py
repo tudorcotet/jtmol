@@ -19,11 +19,10 @@ from ._structure import Angle, structure
 @attr.s(auto_attribs=True, slots=True, frozen=True)
 class LJLKGlobalParameters:
     max_dis: float
-    spline_start: float
+    lj_dlin_sigma_factor: float
     lj_hbond_OH_donor_dis: float
     lj_hbond_dis: float
     lj_hbond_hdis: float
-    lj_switch_dis2sigma: float
     lk_min_dis2sigma: float
     lkb_water_dist: float
     lkb_water_angle_sp2: Angle

@@ -126,13 +126,16 @@ def _make_lj_type_params(lj_radius=1.9, lj_wdepth=0.1,
 
 
 def _make_ljlk_global(lj_hbond_dis=3.0, lj_hbond_OH_donor_dis=2.6,
-                      lj_hbond_hdis=1.75):
-    """Duck-typed LJLKGlobal with the three sigma-override scalars."""
+                      lj_hbond_hdis=1.75, max_dis=6.0,
+                      lj_dlin_sigma_factor=0.6):
+    """Duck-typed LJLKGlobal with the sigma-override + cutoff scalars."""
     from types import SimpleNamespace
     return SimpleNamespace(
         lj_hbond_dis=jnp.float32(lj_hbond_dis),
         lj_hbond_OH_donor_dis=jnp.float32(lj_hbond_OH_donor_dis),
         lj_hbond_hdis=jnp.float32(lj_hbond_hdis),
+        max_dis=jnp.float32(max_dis),
+        lj_dlin_sigma_factor=jnp.float32(lj_dlin_sigma_factor),
     )
 
 
