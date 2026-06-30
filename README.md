@@ -95,16 +95,32 @@ numbers: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 On 1ubq, forward energies match upstream's per-term goldens across all
 20 score channels of `beta_nov2016_cart`, and `jax.grad` matches
 central finite-difference of upstream's own forward to ~1e-9 in
-float64. The single-chain multi-PDB panel (1qys, 1r21, 3plc, 6DMZ_A)
-matches upstream on most channels with small drifts on the rotamer
-library terms (`dunbrack_rotdev` / `dunbrack_semirot`, where jtmol
-uses bilinear interpolation vs upstream's bicubic B-spline). Multi-
-chain interface PDBs (1CGI, 1PRG, 7OPB) currently concatenate chains
-into a single PoseStack rather than detecting the inter-chain break,
-so inter-chain totals diverge from upstream there: a known gap,
-tracked in [`docs/MULTI_CHAIN_PARITY.md`](docs/MULTI_CHAIN_PARITY.md).
-The per-term table and full caveats live in
-[`docs/PARITY.md`](docs/PARITY.md).
+float64.
+
+**Multi-chain complexes are in parity.** 1CGI / 1PRG / 7OPB split into
+their chains at the correct residue indices, `inter_residue_connections`
+opens at each break, and the count-pair machinery treats the chains as
+disconnected. All interface (cross-chain pairwise) channels —
+`fa_ljatr/ljrep/lk`, `fa_elec`, `hbond`, `lk_ball*` — match upstream to
+~1e-4. See [`docs/MULTI_CHAIN_PARITY.md`](docs/MULTI_CHAIN_PARITY.md).
+
+The remaining per-term divergences are **not** jtmol gaps:
+
+- `cart_lengths` / `cart_angles`: jtmol matches upstream's YAML goldens
+  exactly (+37.76 / +183.57 on 1ubq); the pinned `v0.1.22` wheel has a
+  PBT-cache bug that makes it emit 0 (fixed in upstream master by #383).
+- Cubic-Hermite kink-term gradients (`omega`, `cart_torsions`,
+  `dunbrack_rotdev`, …) carry a float32-internal-adjoint floor inside
+  upstream's compiled kernels, unpatchable from jtmol.
+
+`dunbrack` rotamer scoring uses the same bicubic B-spline interpolation
+as upstream (rotamer −log P, chi means, chi sigmas all evaluated through
+`_bicubic_bspline_interpolate` over bspline-prefiltered tables). The one
+residual is a per-PDB edge case: on 3plc, a gap-bridging proline's
+synthesized phi/psi lands the B-spline near a table boundary and drifts
+from upstream (`docs/UPSTREAM_BUGS.md` #6, unclear root cause, one PDB).
+Full per-term table and bug catalogue:
+[`docs/PARITY.md`](docs/PARITY.md), [`docs/UPSTREAM_BUGS.md`](docs/UPSTREAM_BUGS.md).
 
 One channel worth flagging: upstream's hand-written CUDA adjoint for
 `lk_bridge_uncpl` disagrees with finite-difference of its own forward
