@@ -70,6 +70,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from tmol_jax.score.common.count_pair import pairwise_bonded_path_length
+from tmol_jax.score.common.neighbor_list import (
+    _take_2d,
+    _take_3d,
+    build_cell_list,
+    gather_pair_matrix,
+)
 from tmol_jax.score.energy_term import EnergyTerm
 from tmol_jax.score.lk_ball.potentials import (
     HYBRIDIZATION_NONE,
@@ -272,6 +278,15 @@ class LKBallTermState:
     # ``bpl > 4`` count-pair weight gate returns 1.0 for them).
     bonded_path_length: jax.Array
 
+    # ---- Optional NL state (populated only when use_neighbor_list=True). #
+    # neighbor_idx       : [P, N, max_nbr] int32 (FULL list — asymmetric
+    #                      polar→occluder gate, so we keep both directions)
+    # neighbor_mask      : [P, N, max_nbr] bool
+    # bpl_neighbor       : [P, N, max_nbr] int32 (gathered bonded-path-length)
+    neighbor_idx: Any = None
+    neighbor_mask: Any = None
+    bpl_neighbor: Any = None
+
 
 # --------------------------------------------------------------------------- #
 # Main term                                                                    #
@@ -315,6 +330,8 @@ class LKBallEnergyTerm(EnergyTerm):
         max_n_neighbors: int = 4,
         n_waters: int = 4,
         max_H_per_donor: int = 3,
+        use_neighbor_list: bool = False,
+        neighbor_list_cutoff: float = 6.0,
     ):
         # The full path uses ``safe_norm`` / ``safe_normalize`` (double-
         # where trick) throughout the hot path and sanitizes NaN-sentinel
@@ -334,6 +351,13 @@ class LKBallEnergyTerm(EnergyTerm):
         # donor heavy atom in the pose carries. 3 covers the -NH3+ of LYS /
         # the N-terminus (three bonded Hs). Amide nitrogens carry 2.
         self.max_H_per_donor = int(max_H_per_donor)
+        # NL plumbing. We build a FULL (not half) cell list because lk_ball
+        # is directionally asymmetric — the polar→occluder gate distinguishes
+        # (i, j) from (j, i). Storing both directions doubles per-atom
+        # neighbour count vs LJLK but is still ~25x smaller than dense [N, N]
+        # at 6 Å on protein cores.
+        self.use_neighbor_list = bool(use_neighbor_list)
+        self.neighbor_list_cutoff = float(neighbor_list_cutoff)
 
     # ------------------------------------------------------------------ #
     # Metadata                                                            #
@@ -442,6 +466,24 @@ class LKBallEnergyTerm(EnergyTerm):
         if self.mode == "fallback":
             enabled = jnp.asarray(0, dtype=jnp.int32)
 
+        # Optional cell-list construction. lk_ball needs a FULL list (not
+        # half) because the polar→occluder gate is asymmetric: contributions
+        # at (i, j) and (j, i) are independent when i is polar+real and j
+        # is occluder+real (or vice versa).
+        neighbor_idx = None
+        neighbor_mask = None
+        bpl_neighbor = None
+        if self.use_neighbor_list and bool(enabled):
+            nbr_idx, _n_nbrs, nbr_mask = build_cell_list(
+                pose_stack.coords,
+                cutoff=self.neighbor_list_cutoff,
+                atom_is_real=np.asarray(is_real_2d),
+                half_list=False,
+            )
+            bpl_neighbor = gather_pair_matrix(bpl_3d, nbr_idx)
+            neighbor_idx = nbr_idx
+            neighbor_mask = nbr_mask
+
         return LKBallTermState(
             enabled=enabled,
             lj_radius=lj_radius_2d,
@@ -462,6 +504,9 @@ class LKBallEnergyTerm(EnergyTerm):
             attached_H_mask=att_H_mask_3d,
             n_attached_H=n_att_H_2d,
             bonded_path_length=bpl_3d,
+            neighbor_idx=neighbor_idx,
+            neighbor_mask=neighbor_mask,
+            bpl_neighbor=bpl_neighbor,
         )
 
     # ------------------------------------------------------------------ #
@@ -515,9 +560,14 @@ class LKBallEnergyTerm(EnergyTerm):
 
         n_poses, max_n_atoms, _ = coords.shape
 
+        use_nl = self.use_neighbor_list and (state.neighbor_idx is not None)
+
         def eval_one_pose(
             pose_coords: jax.Array,
             pose_state: Any,
+            pose_nbr_idx: Any,
+            pose_nbr_mask: Any,
+            pose_bpl_neighbor: Any,
         ) -> jax.Array:
             # pose_coords: [N, 3]
             # pose_state fields: [N, ...] each.
@@ -534,11 +584,21 @@ class LKBallEnergyTerm(EnergyTerm):
                 pose_state["n_attached_H"],
             )  # [N, n_waters, 3]
 
-            totals = self._score_all_pairs(
-                coords=pose_coords,
-                waters=waters,
-                state=pose_state,
-            )
+            if use_nl:
+                totals = self._score_all_pairs_nl(
+                    coords=pose_coords,
+                    waters=waters,
+                    state=pose_state,
+                    nbr_idx=pose_nbr_idx,
+                    nbr_mask=pose_nbr_mask,
+                    bpl_neighbor=pose_bpl_neighbor,
+                )
+            else:
+                totals = self._score_all_pairs(
+                    coords=pose_coords,
+                    waters=waters,
+                    state=pose_state,
+                )
             return totals  # [4]
 
         # Extract per-pose slices of term state.
@@ -563,7 +623,22 @@ class LKBallEnergyTerm(EnergyTerm):
             "bonded_path_length": state.bonded_path_length,
         }
 
-        totals = jax.vmap(eval_one_pose, in_axes=(0, 0))(coords, per_pose)
+        # Pass NL state (or per-pose dummies for the dense path) through
+        # the per-pose vmap. When use_nl is False the dummy 0-vectors are
+        # never read.
+        if use_nl:
+            nbr_idx_v = state.neighbor_idx
+            nbr_mask_v = state.neighbor_mask
+            bpl_neighbor_v = state.bpl_neighbor
+        else:
+            n_poses, n_atoms = coords.shape[0], coords.shape[1]
+            nbr_idx_v = jnp.zeros((n_poses, n_atoms, 1), dtype=jnp.int32)
+            nbr_mask_v = jnp.zeros((n_poses, n_atoms, 1), dtype=jnp.bool_)
+            bpl_neighbor_v = jnp.zeros((n_poses, n_atoms, 1), dtype=jnp.int32)
+
+        totals = jax.vmap(eval_one_pose, in_axes=(0, 0, 0, 0, 0))(
+            coords, per_pose, nbr_idx_v, nbr_mask_v, bpl_neighbor_v
+        )
         # totals: [n_poses, 4]
 
         return {
@@ -629,6 +704,74 @@ class LKBallEnergyTerm(EnergyTerm):
         polar_f = is_polar[:, None, None].astype(jnp.float32)
         nan_waters = jnp.full_like(waters, jnp.nan)
         return jnp.where(polar_f > 0.5, waters, nan_waters)
+
+    def _score_all_pairs_nl(
+        self,
+        coords: jax.Array,
+        waters: jax.Array,
+        state: dict,
+        nbr_idx: jax.Array,
+        nbr_mask: jax.Array,
+        bpl_neighbor: jax.Array,
+    ) -> jax.Array:
+        """NL variant of :meth:`_score_all_pairs`.
+
+        ``nbr_idx`` is a FULL (non-half) list — both (i, j) and (j, i) are
+        present when within cutoff — because the polar→occluder gate is
+        asymmetric. Same lk_ball_pair call as the dense path; we just
+        gather j-side coords / waters / params along the neighbour axis
+        instead of materialising the [N, N] meshgrid.
+        """
+
+        # Gather j-side coords, waters, and per-atom params along the
+        # neighbour axis. coords_j: [N, max_nbr, 3]; waters_j: [N, max_nbr, n_waters, 3].
+        coords_j = coords[nbr_idx]
+        waters_j = waters[nbr_idx]
+
+        def pair_at(i, k):
+            j = nbr_idx[i, k]
+            params = {
+                "i_lj_radius": state["lj_radius"][i],
+                "j_lj_radius": state["lj_radius"][j],
+                "i_lk_dgfree": state["lk_dgfree"][i],
+                "i_lk_lambda": state["lk_lambda"][i],
+                "j_lk_volume": state["lk_volume"][j],
+                "i_is_donor": state["is_donor"][i],
+                "j_is_donor": state["is_donor"][j],
+                "i_is_hydroxyl": state["is_hydroxyl"][i],
+                "j_is_hydroxyl": state["is_hydroxyl"][j],
+                "i_is_polarh": state["is_polarh"][i],
+                "j_is_polarh": state["is_polarh"][j],
+                "i_is_acceptor": state["is_acceptor"][i],
+                "j_is_acceptor": state["is_acceptor"][j],
+            }
+            bpl = bpl_neighbor[i, k]
+            res = lk_ball_pair(
+                coord_i=coords[i],
+                waters_i=waters[i],
+                coord_j=coords_j[i, k],
+                waters_j=waters_j[i, k],
+                params=params,
+                defaults=self.defaults,
+                bonded_path_length=bpl,
+            )
+            gate = (
+                state["is_polar"][i]
+                & state["is_occluder"][j]
+                & nbr_mask[i, k]
+                & state["is_real"][i]
+                & state["is_real"][j]
+            )
+            g = gate.astype(jnp.float32)
+            return jnp.stack(
+                [g * res.lk_iso, g * res.lk_ball, g * res.lk_bridge, g * res.lk_bridge_uncpl]
+            )
+
+        n_atoms, max_nbr = nbr_idx.shape
+        ii = jnp.broadcast_to(jnp.arange(n_atoms)[:, None], (n_atoms, max_nbr))
+        kk = jnp.broadcast_to(jnp.arange(max_nbr)[None, :], (n_atoms, max_nbr))
+        per_pair = jax.vmap(jax.vmap(pair_at))(ii, kk)  # [N, max_nbr, 4]
+        return jnp.sum(per_pair, axis=(0, 1))  # [4]
 
     def _score_all_pairs(
         self,
