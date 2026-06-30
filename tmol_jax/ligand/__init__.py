@@ -20,18 +20,20 @@ What is in this package right now:
   that :func:`tmol_jax.io.pose_stack_from_biotite.build_context_from_biotite`
   consumes when called with ``ligand_params_files=[...]``.
 
+* :mod:`tmol_jax.ligand.atom_typing` — a faithful RDKit port of upstream's
+  ``assign_tmol_atom_types`` (the ~1568-line Rosetta generic-potential
+  classifier). Reads a MOL2 and assigns generic-potential atom types
+  (``CR``, ``Nim``, ``ClR``, …). Requires the optional ``ligand`` extra
+  (RDKit); the import is guarded so ``import tmol_jax.ligand`` still works
+  without RDKit installed.
+
 What is **deferred** to a follow-up:
 
-* ``prepare_ligands=True`` (the RDKit SMILES/MOL2/CIF → params pipeline).
-  Calling :func:`build_context_from_biotite` with that flag raises
-  ``NotImplementedError`` and points the caller at the YAML route.
-* Full :class:`PackedBlockTypes` + :class:`CanonicalOrdering` rebuild
-  for the ligand restypes. The current scaffold parses the ligand
-  YAML and surfaces the result on the build context, but the protein
-  PoseStack the smoke test exercises does not yet *contain* the ligand
-  as a residue. Hooking the ligand restype into the canonical-form
-  pipeline (atom-name ↔ canonical-slot mapping, ideal coords from the
-  YAML's ``icoors``, palette extension) is the next rung.
+* ``prepare_ligands=True`` (the full RDKit MOL2/CIF/SMILES → params
+  orchestration: residue-builder ICOOR tree + params serialization).
+  The atom-typing core is ported and parity-verified (28/28 on cdk2);
+  the remaining pieces (``residue_builder``, ``params_io`` writer) are
+  the next rung.
 """
 
 from __future__ import annotations
@@ -44,3 +46,21 @@ __all__ = [
     "load_ligand_params_file",
     "extend_db_from_yaml",
 ]
+
+# Atom typing needs RDKit (optional `ligand` extra). Guard the import so
+# the base package stays importable without it; the names appear in
+# __all__ only when RDKit is present.
+try:
+    from tmol_jax.ligand.atom_typing import (  # noqa: F401
+        AtomTypeAssignment,
+        assign_atom_types_from_mol2,
+        assign_tmol_atom_types,
+    )
+
+    __all__ += [
+        "AtomTypeAssignment",
+        "assign_atom_types_from_mol2",
+        "assign_tmol_atom_types",
+    ]
+except ImportError:  # rdkit not installed
+    pass
