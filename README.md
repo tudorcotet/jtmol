@@ -136,33 +136,47 @@ with reproducers and workarounds; each one drives a category of
 
 ## Protein-ligand status
 
-jtmol can load a protein-ligand complex and place the ligand in the
-`PoseStack` given a precomputed upstream `.tmol` params file, and score
-the ligand's Lennard-Jones / Lennard-Kihara contributions. Verified on
-the cdk2 complex (280 residues): the ligand block is constructed with
-its 28 atoms at crystal coordinates, all atom types resolve to
-generic-potential LJ/LK parameters, and protein-only parity is
+jtmol can load a protein-ligand complex, place the ligand in the
+`PoseStack`, and score it across the main pairwise channels. Verified
+on the cdk2 complex (280 residues): the ligand block is constructed
+with its 28 atoms at crystal coordinates, and protein-only parity is
 unchanged (panel snapshot passes).
 
 What works:
 
-- `pose_stack_from_biotite(atoms, ligand_params_files=[...])` builds a
-  `PoseStack` containing the ligand residue.
-- Generic-potential ligand atom types (`CR`, `Nim`, `ClR`, …) carry
-  LJ/LK parameters in `chemical.yaml` + `ljlk.yaml`, ported verbatim
-  from upstream PR #361.
+- **Pose construction**: `pose_stack_from_biotite(atoms,
+  ligand_params_files=[...])` builds a `PoseStack` containing the
+  ligand residue (from a precomputed upstream `.tmol` params file).
+- **LJ / LK**: generic-potential ligand atom types (`CR`, `Nim`,
+  `ClR`, …) carry parameters in `chemical.yaml` + `ljlk.yaml`; all 28
+  cdk2 ligand atoms resolve to real LJ/LK params and contribute.
+- **Electrostatics**: the `.tmol` per-atom partial charges flow into
+  `fa_elec` (cdk2 ligand contributes ≈ −4 kcal; protein elec
+  unchanged).
+- **Hydrogen bonds**: the generic hbond block is ported and ligand N/O
+  atoms participate (cdk2 ligand contributes ≈ −2.6 kcal; protein
+  hbond unchanged).
+- **Atom typing from a raw MOL2**:
+  `tmol_jax.ligand.assign_atom_types_from_mol2(path)` assigns Rosetta
+  generic-potential atom types (faithful RDKit port of upstream's
+  `atom_typing.py`), verified 28/28 on `cdk2.lig.mol2` vs the
+  reference. Needs the optional `ligand` extra.
 
 What is not done yet (each scoped, none silently approximated):
 
-- **Ligand electrostatics**: the `.tmol` partial charges parse but are
-  not yet wired into `fa_elec` (ligand contributes 0 to elec).
-- **Ligand hydrogen bonds**: donor/acceptor flags and the `hbond.yaml`
-  generic block are not ported (ligand contributes 0 to hbond).
-- **Atom typing from raw inputs**: turning a raw MOL2/SDF/SMILES into a
-  `.tmol` params file requires the RDKit-based typing pipeline
-  (upstream's ~1568-line `atom_typing.py`); `prepare_ligands=True`
-  raises `NotImplementedError`. Until then, supply upstream's
-  precomputed `.tmol` params files.
+- **End-to-end raw-input → params**: `assign_atom_types_from_mol2`
+  gives the atom types, but the full `prepare_ligands` orchestration
+  (the `residue_builder` ICOOR tree + params-file writer) is not
+  ported, so you still supply a precomputed `.tmol` for pose
+  construction. `prepare_ligands=True` raises `NotImplementedError`.
+- **Per-complex numerical parity**: ligand elec/hbond use the
+  upstream mechanism and the ligand demonstrably contributes, but the
+  exact per-complex values are not validated against an upstream
+  golden (none is bundled). LJ/LK and atom typing are parity-checked;
+  elec/hbond magnitudes are sanity-checked, not golden-matched.
+- **Coverage**: only cdk2 is tested end-to-end. Other ligand
+  chemistries (sulfonamides, phosphates, fused heteroaromatics)
+  exercise classifier and scoring branches this one molecule does not.
 
 ## A few common recipes
 
