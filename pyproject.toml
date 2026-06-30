@@ -21,6 +21,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "optax>=0.2.0"]
+# RDKit is only needed for the (deferred) on-the-fly ligand atom-typing
+# path; pre-baked .tmol params files are RDKit-free.
+ligand = ["rdkit>=2024.0"]
 # ``torch`` is only needed to regenerate the ``.npz`` scoring tables via
 # ``scripts/convert_binary_tables.py`` (or to read the legacy
 # ``rama.zip`` / ``omega_bbdep.zip`` / ``dunbrack.bin`` directly).

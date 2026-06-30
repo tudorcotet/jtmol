@@ -463,6 +463,52 @@ def _derived_types_for_param_db(
     return extended, parsed, tuple(ligand_3lcs)
 
 
+def _extended_co_pbt_for_ligands(
+    parsed_files: Sequence[Any],
+) -> Tuple[Any, Any]:
+    """Return ``(canonical_ordering, packed_block_types)`` extended with
+    the ligand restypes parsed from ``parsed_files``.
+
+    The protein half reproduces the default 20-AA (+ termini variant)
+    palette exactly; the ligand restypes are appended on top. Because the
+    generic-potential ligand atom types now live in ``chemical.yaml``
+    (upstream PR #361), the default patched chem-db already resolves them,
+    so building the ligand ``RefinedResidueType`` (icoors -> ideal coords)
+    and packing it needs no extra atom-type bookkeeping.
+    """
+    from tmol_jax.chemical.constants import canonical_aa_3letter
+    from tmol_jax.chemical.patched_chemdb import default_patched_chemdb
+    from tmol_jax.chemical.restypes import _refined_from_raw
+    from tmol_jax.io.canonical_ordering import CanonicalOrdering
+    from tmol_jax.pose.packed_block_types import PackedBlockTypes
+
+    ligand_raws = [res for lp in parsed_files for res in lp.residues]
+
+    # Canonical ordering: default protein residues + ligand residues.
+    patched = default_patched_chemdb()
+    canonical_set = set(canonical_aa_3letter)
+    protein_res = [
+        r for r in patched.residues
+        if getattr(r, "name3", None) in canonical_set
+    ]
+
+    class _MiniDb:
+        __slots__ = ("residues",)
+
+    mini = _MiniDb()
+    mini.residues = tuple(protein_res) + tuple(ligand_raws)
+    co = CanonicalOrdering.from_chemdb(mini)
+
+    # PackedBlockTypes: default 20-AA + variant palette, then ligands.
+    base_pbt = PackedBlockTypes.default()
+    ligand_refined = [_refined_from_raw(r) for r in ligand_raws]
+    pbt = PackedBlockTypes.from_restypes(
+        base_pbt.chem_db,
+        list(base_pbt.active_block_types) + ligand_refined,
+    )
+    return co, pbt
+
+
 def build_context_from_biotite(
     biotite_structure: Any,
     *,
@@ -514,15 +560,16 @@ def build_context_from_biotite(
             strict_atom_types=strict_atom_types,
         )
 
-    co = canonical_ordering or canonical_ordering_for_biotite()
-    pbt = packed_block_types or packed_block_types_for_biotite()
-
-    # ponytail: extending `co` + `pbt` with the ligand restypes is the
-    # next rung — see tmol_jax/ligand/__init__.py for the deferred-work
-    # note. For now the canonical-form ignores ligand residues (they
-    # land in the "unrecognised" bucket the existing loop already
-    # handles) but the params payload is available on the returned
-    # context for downstream code that wants to score the ligand.
+    if parsed_files:
+        # Extend co/pbt so the ligand 3lc enters the canonical ordering
+        # and the ligand restype lands in the packed block types
+        # (upstream PR #361). Caller-supplied co/pbt take precedence.
+        ext_co, ext_pbt = _extended_co_pbt_for_ligands(parsed_files)
+        co = canonical_ordering or ext_co
+        pbt = packed_block_types or ext_pbt
+    else:
+        co = canonical_ordering or canonical_ordering_for_biotite()
+        pbt = packed_block_types or packed_block_types_for_biotite()
 
     cf = canonical_form_from_biotite(
         biotite_structure,
@@ -550,6 +597,7 @@ def pose_stack_from_biotite(
     canonical_ordering: Optional[Any] = None,
     packed_block_types: Optional[Any] = None,
     missing_density_distance_threshold: float = 2.4,
+    ligand_params_files: Optional[Sequence[Any]] = None,
     **kwargs: Any,
 ):
     """Build a :class:`PoseStack` from a biotite ``AtomArray`` / ``AtomArrayStack``.
@@ -577,6 +625,24 @@ def pose_stack_from_biotite(
         A ``PoseStack`` built from the canonical form.
     """
     _require_biotite()
+
+    # Ligand path: route through build_context_from_biotite so the ligand
+    # restype enters the (extended) canonical ordering + packed block
+    # types, then pack via the name3-keyed fallback (the construction
+    # bridge does protein-specific terminus variant assignment that a
+    # non-polymer ligand block must skip).
+    if ligand_params_files:
+        ctx = build_context_from_biotite(
+            biotite_structure,
+            canonical_ordering=canonical_ordering,
+            packed_block_types=packed_block_types,
+            missing_density_distance_threshold=missing_density_distance_threshold,
+            ligand_params_files=ligand_params_files,
+        )
+        return _pose_stack_from_canonical_form_fallback(
+            ctx.packed_block_types, ctx.canonical_form, co=ctx.canonical_ordering
+        )
+
     co = canonical_ordering or canonical_ordering_for_biotite()
     pbt = packed_block_types or packed_block_types_for_biotite()
 
@@ -601,7 +667,9 @@ def pose_stack_from_biotite(
     return _pose_stack_from_canonical_form_fallback(pbt, cf)
 
 
-def _pose_stack_from_canonical_form_fallback(pbt: Any, cf: Dict[str, Any]):
+def _pose_stack_from_canonical_form_fallback(
+    pbt: Any, cf: Dict[str, Any], *, co: Optional[Any] = None
+):
     """Build a PoseStack from a canonical-form dict without the
     ``pose_stack_construction`` bridge.
 
@@ -637,9 +705,10 @@ def _pose_stack_from_canonical_form_fallback(pbt: Any, cf: Dict[str, Any]):
 
     # Build a map from the co-index of a restype to the pbt index by label.
     # We need co to go from "restype index used in cf" -> 3lc -> pbt index.
-    from tmol_jax.io.canonical_ordering import default_canonical_ordering
+    if co is None:
+        from tmol_jax.io.canonical_ordering import default_canonical_ordering
 
-    co = default_canonical_ordering()
+        co = default_canonical_ordering()
     co_restypes = getattr(co, "restype_io_equiv_classes", ())
     co_ind_to_3lc = {i: name for i, name in enumerate(co_restypes)}
 
