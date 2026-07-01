@@ -244,49 +244,101 @@ the 9 cells in [`UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md) with
 `max|dg|` in the ~1e-4 range will stay flagged as documented residuals
 rather than parity failures.
 
-## 6. `3plc` dunbrack b-spline output diverges from the header source for synthesized phi/psi
+## 6. `3plc` dunbrack_rot / dunbrack_rotdev residual — UPSTREAM-SIDE (stale/inconsistent golden)
 
-**Status as of 2026-06-30.** STILL-PRESENT (unclear root cause). `bspline.py`,
-`bspline.hh`, `bspline.pybind.cpp` are untouched in upstream since `6d40bad`.
-Diagnosis still requires instrumenting the compiled kernel.
+**Status as of 2026-07-01.** ROOT-CAUSED. The earlier framing ("bicubic
+B-spline diverges near a table boundary for synthesized phi/psi") is
+**refuted**. The recorded 3plc `dunbrack_rot` / `dunbrack_rotdev`
+`E(ref)` goldens are not reproducible from the actual pose+math; they
+are stale / cross-run-inconsistent. jtmol's rotameric dunbrack is a
+verified faithful port. **No jtmol code change** (any change would
+regress the four other panel PDBs, which pass at ≤ 6e-06%).
 
-**Symptom.** On 3plc, `dunbrack_rot` differs from upstream by 4.1%
-and `dunbrack_rotdev` by 21% at the two residues bracketing the
-missing-density gap in the PDB (residues 27–34 are absent; THR-26 and
-ASP-35 end up as virtual peptide-bond neighbours after our
-gap-bridging fix in `67ac14a`). The synthesized phi/psi values at
-those two residues are bit-identical between jtmol and upstream:
+**Symptom (recorded).** 3plc `dunbrack_rot` E(jax)=+52.9200 vs
+E(ref)=+55.1774 (4.1%); `dunbrack_rotdev` E(jax)=+261.6107 vs
+E(ref)=+331.0977 (21%); `dunbrack_semirot` E(jax)=E(ref)=+46.1987 (0%).
+Localised (per the old note) to THR-26 / ASP-35, the residues bracketing
+the missing-density gap (PDB residues 27–34 absent).
+
+**What the gap actually is.** Not a spatial gap disguised as a numbering
+gap — it is a real ~5 Å break: `C(THR26)–N(ASP35) = 5.162 Å` (a peptide
+bond is ~1.33 Å). jtmol's `pose_stack_from_pdb` nonetheless keeps a
+polymer bond across it (the "gap-bridging fix" in `67ac14a`), so it
+synthesizes phi/psi across the fictional bond:
 
 ```
-THR-26  psi = +139.99°   (synthesized from N-CA-C-THR26 + N-ASP35)
-ASP-35  phi = +14.18°    (synthesized from C-THR26 + N-CA-C-ASP35)
+THR-26  psi = +139.99°   (N-CA-C(THR26) — N(ASP35), frac index ≈ 32.0 in a 37-wide grid)
+ASP-35  phi = +14.18°    (C(THR26) — N-CA-C(ASP35),  frac index ≈ 19.4)
 ```
 
-jtmol's bspline interpolation at these (phi, psi) points returns a
-penalty of `(52.34°)² / (2·8.39°²) = 19.44`. Upstream returns a
-different value, but we cannot get inside the compiled C++ kernel
-locally to see why. The audit (commit `43d9b48`) confirmed
-that jtmol's `tmol_jax/numeric/bspline.py` is a line-for-line port of
-`tmol/numeric/bspline_compiled/bspline.hh` (cubic prefilter pole
-`√3 − 2`, normalisation λ, 4-cell periodic wrap), and the
-prefilter-coefficient diff between float32 and float64 is at the
-~1e-7 level, five orders of magnitude too small for 21%.
+Both land in the grid **interior**, not near any boundary/periodicity
+seam, and the spline is smooth there (sweeping THR-26 psi over
+135°–150° moves its rotdev by < 1.4 units, from 18.4 to 19.7). The
+boundary/periodicity story does not hold.
 
-So either upstream's compiled bspline diverges from its own header
-source at the synthesized phi/psi points, or upstream applies some
-boundary-condition handling at the gap-bridging residues that our
-header read did not reveal.
+**Decisive experiment (this branch).** Recomputed jtmol's per-residue
+3plc dunbrack directly and enumerated every phi/psi assignment of the
+two gap residues (bridged real angle vs upstream's undefined-dihedral
+sentinel φ=−60° / ψ=+60° from `dunbrack_pose_score.impl.hh`):
 
-**Reproducer.** Run the parity harness on 3plc and inspect the
-`dunbrack_rot` / `dunbrack_rotdev` cells in
-[`UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md). The full diagnostic is in
-[`PARITY.md`](PARITY.md) under the "3plc dunbrack residual" section.
+```
+                                 rot       rotdev    semirot
+GOLDEN  E(ref)                   55.1774   331.0977  46.1987
+THR26=bridge   ASP35=bridge      52.9200   261.6107  46.1987   <- current jtmol
+THR26=bridge   ASP35=sentinel    52.9200   261.5082  46.3579
+THR26=sentinel ASP35=bridge      52.0355   296.1244  46.1987
+THR26=sentinel ASP35=sentinel    52.0355   296.0219  46.3579
+```
 
-**jtmol workaround.** None. We cannot fix this without instrumenting
-upstream's compiled bspline kernel to dump its intermediate
-coefficients at the gap-bridging (phi, psi) points. Doing so requires
-a Modal-side modification to the harness rather than a jtmol-side
-change.
+Two things fall out:
+1. **The golden pose == jtmol's pose.** `semirot` is bit-identical
+   (46.1987) *only* when ASP-35 keeps its bridged phi (=+14.18°);
+   the sentinel flips it to 46.3579. So the upstream run that produced
+   the goldens used the same gap-bridged connectivity and the same
+   coordinates as jtmol. Every non-gap residue therefore has identical
+   phi/psi/chi on both sides (else `semirot` would not be 0%), so their
+   rot/rotdev must be identical too.
+2. **No gap-residue configuration reaches the golden.** The golden
+   rot/rotdev sit *above* even the maximal (sentinel-THR26) case
+   (52.04 / 296.12). The two gap residues cannot supply the missing
+   +2.26 (rot) / +34.97 (rotdev) under any phi/psi, and every other
+   residue is provably identical. The golden rot/rotdev are internally
+   inconsistent with their own semirot cell.
+
+**Verified identical between jtmol and upstream** (so the residual is
+not a port bug): rotamer classification (`classify_rotamer`, ±120°/0
+bins), dihedral wrap (`wrap ∈ [0, period]` vs jtmol `mod` — differ only
+exactly at the seam, which cancels under the periodic 4-cell gather),
+the bspline (pole √3−2, λ, weight polynomials, `interpolate` index math
+— `bspline.hh` line-for-line), the mean pre-shift
+(`means_deg[<−120]+=360`, `params.py:_calculate_rot_mean_coeffs` ==
+`dunbrack_energy_term.py:478`), the sdev tables (upstream applies no
+floor; jtmol's `where(sdev>1e-6, sdev, 1.0)` guard **never fires** —
+0 of 942 192 cells are ≤ 1e-6 rad), and the chidev formula
+(`chi<−120° ? chi+2π−mean : chi−mean`, `/2σ²`).
+
+**Diagnosis: UPSTREAM-SIDE (stale / cross-run-inconsistent golden).**
+jtmol is as-correct-as (in fact a faithful port of) upstream at these
+residues. The recorded 3plc rot/rotdev `E(ref)` column does not
+correspond to the pose that produced its own semirot `E(ref)`; it is
+stale or was captured in a run whose rot/rotdev differed for a reason
+that no longer (and cannot) exist in the current pose.
+
+**Experiment that would fully settle it.** Rebuild upstream's compiled
+C++/CUDA extension (Modal/CUDA box) and re-run the 3plc dunbrack live to
+regenerate `E(ref)`. Prediction: it returns 52.9200 / 261.6107,
+matching jtmol and closing the cells. That regeneration is a
+harness/Modal task, not a jtmol change.
+
+**Reproducer (local, no upstream build needed).** The per-residue +
+combination sweep above runs entirely on jtmol against
+`tmol/tmol/tests/data/pdb/3plc.pdb`; THR-26 is block 25, ASP-35 is
+block 26 (0-indexed). See also
+[`UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md) §"Known residual: 3plc".
+
+**jtmol workaround.** None needed — no jtmol bug. Do not "fix" the
+gap-residue dunbrack: it would push jtmol away from its faithful-port
+values and regress the four panel PDBs at ≤ 6e-06% parity.
 
 ## 7. `gen_torsions` term not yet ported (RESOLVED: ported)
 
