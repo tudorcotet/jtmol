@@ -57,12 +57,28 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # PDB locations per the task brief: 1ubq/1qys come from the jtmol test
 # data dir; 1r21/3plc/6DMZ_A come from upstream's tests/data/pdb so
 # their goldens stay aligned with what upstream tmol used.
+def _up(rel: str) -> str:
+    return os.path.join(_REPO_ROOT, "tmol/tmol/tests/data/pdb", rel)
+
+
 PDB_PATHS: dict[str, str] = {
+    # Original single-chain baselines.
     "1ubq": os.path.join(_REPO_ROOT, "tmol_jax/tests/data/1ubq.pdb"),
     "1qys": os.path.join(_REPO_ROOT, "tmol_jax/tests/data/1qys.pdb"),
-    "1r21": os.path.join(_REPO_ROOT, "tmol/tmol/tests/data/pdb/1r21.pdb"),
-    "3plc": os.path.join(_REPO_ROOT, "tmol/tmol/tests/data/pdb/3plc.pdb"),
-    "6DMZ_A": os.path.join(_REPO_ROOT, "tmol/tmol/tests/data/pdb/6DMZ_A.pdb"),
+    "1r21": _up("1r21.pdb"),
+    "3plc": _up("3plc.pdb"),
+    "6DMZ_A": _up("6DMZ_A.pdb"),
+    # Size-graded fixtures (upstream bysize set): fold + composition
+    # diversity across 15-200 residues. PDBs that fail to load are
+    # reported as skipped, so this is safe to widen.
+    "015res_1lu6": _up("bysize_015_res_1lu6.pdb"),
+    "040res_5uoi": _up("bysize_040_res_5uoi.pdb"),
+    "100res_5umr": _up("bysize_100_res_5umr.pdb"),
+    "150res_5yzf": _up("bysize_150_res_5yzf.pdb"),
+    "200res_5mm8": _up("bysize_200_res_5mm8.pdb"),
+    # Multi-chain / interface structures (chains split, breaks open).
+    "1CGI": os.path.join(_REPO_ROOT, "tmol_jax/tests/data/1CGI.pdb"),
+    "7OPB": os.path.join(_REPO_ROOT, "tmol_jax/tests/data/7OPB.pdb"),
 }
 
 SNAPSHOT_PATH = os.path.join(
