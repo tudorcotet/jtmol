@@ -83,6 +83,12 @@ outputs/
 # Reference only — not part of this package.
 /tmol/
 
+# Local-only data (never commit — may contain proprietary/internal datasets)
+/data/
+
+# Agent worktrees / scratch
+.claude/
+
 # Local scratch / regenerable artifacts
 scratch_pdbs/
 docs/upstream_parity_results.csv

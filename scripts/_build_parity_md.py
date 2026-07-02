@@ -9,7 +9,7 @@ import os
 import re
 import sys
 
-REPO = "os.path.dirname(os.path.dirname(os.path.abspath(__file__)))"
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def parse_log(path):
     """Parse [row] lines from the driver stdout log.
