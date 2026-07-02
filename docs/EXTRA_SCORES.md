@@ -7,8 +7,7 @@ and affinity but are not part of Rosetta's canonical
 mosaic / Boltz-2 hallucination loops where they're cheap to evaluate
 and add orthogonal gradient signal to the Rosetta interface term.
 
-Motivation: on Adaptyv's de novo binder corpus (≈200 designs with
-measured `k_on`, `k_off`, `K_d`), these scores together explain more
+Motivation: on a de novo binder benchmark, these scores together explain more
 of the kinetic variance than the full Rosetta interface energy
 alone:
 

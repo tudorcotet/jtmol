@@ -11,8 +11,7 @@ that successful designs have ≤ 2 buried-unsat polars per 1000 Å² of
 interface, while failed designs typically have 3-7. Subsequently
 Stranges-Kuhlman-style BUH normalized per kÅ² of buried surface area
 has been shown to correlate strongly with experimental ``k_off``
-(Adaptyv internal corpus: r ≈ +0.54 on de novo binders, ``n=43``,
-``p=1.7e-4``).
+(on an internal de novo binder benchmark).
 
 Why not Rosetta's ``BuriedUnsatHbonds`` filter directly? Two reasons:
 
