@@ -1,0 +1,105 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# pyenv
+.python-version
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# mypy / pyright
+.mypy_cache/
+.pyre/
+.pytype/
+
+# macos
+.DS_Store
+._*
+
+# jtmol local scratch
+outputs/
+*.pdb.out
+
+# Vendored upstream reference (multi-GB clone with its own .git, build artifacts).
+# Reference only — not part of this package.
+/tmol/
+
+# Local-only data (never commit — may contain proprietary/internal datasets)
+/data/
+
+# Agent worktrees / scratch
+.claude/
+
+# Local scratch / regenerable artifacts
+scratch_pdbs/
+docs/upstream_parity_results.csv
+
+# Large regenerable result CSVs (>1MB). Small parity CSVs stay tracked.
+docs/h1_analysis_*.csv.gz
+docs/*.large.csv
+
+# Wheel/egg
+jtmol.egg-info/
+docs/_npz_parity_run.log
+
+# Generated parity-harness report (run tests/test_upstream_parity.py)
+docs/UPSTREAM_PARITY.md

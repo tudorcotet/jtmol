@@ -1,0 +1,1058 @@
+{
+  "schema_version": 1,
+  "panel_id": "upstream_exact_panel_v2",
+  "description": "Pinned official-upstream-selected inputs for unconditional jtmol versus tmol correctness coverage and exact-coordinate performance diagnostics.",
+  "created_date": "2026-07-12",
+  "upstream_tmol": {
+    "repository": "https://github.com/uw-ipd/tmol",
+    "version": "0.1.36",
+    "release_tag": "v0.1.36",
+    "git_commit": "ea3d46295ab142c9f6f57a171638d420af41e034",
+    "wheel": {
+      "filename": "tmol-0.1.36+cu128torch2.10-cp312-cp312-linux_x86_64.whl",
+      "url": "https://github.com/uw-ipd/tmol/releases/download/v0.1.36/tmol-0.1.36+cu128torch2.10-cp312-cp312-linux_x86_64.whl",
+      "sha256": "2093723b74eb4fff4a7ccf2ccb2f08f3bcee5171fc092044a38871ccecbd89dc",
+      "python": "3.12",
+      "torch": "2.10.*",
+      "cuda": "12.8"
+    }
+  },
+  "selection": {
+    "source": "RCSB PDB, legacy format",
+    "source_url_template": "https://files.rcsb.org/download/{pdb_id}.pdb",
+    "candidate_order": "ASCII lexicographic order by PDB identifier",
+    "candidates_scanned_for_s3": 161,
+    "accepted_count": 128,
+    "certification_scope": "Unconditional official-upstream-only selection. jtmol load, layout, native-coordinate, representation, score, and memory failures remain outcomes and are never selection filters.",
+    "unique_signature": "Official-upstream semantic topology_sha256 over canonical pose topology and chemistry metadata.",
+    "candidate_universe_sha256": "6f2dfec10aad2a19dfe1a6fcef507d9e384f0ce2ce3128e5bb7725c6ce28ab84",
+    "rule": "First 128 unique official-upstream topology_sha256 values after successful official tmol 0.1.36 one-pose load; no jtmol-derived filter.",
+    "candidates_scanned": 161,
+    "upstream_load_failure_count": 25,
+    "upstream_load_failure_ids": [
+      "10XA",
+      "10XO",
+      "11QE",
+      "1AME",
+      "1B9W",
+      "1BGC",
+      "1BT0",
+      "1C2A",
+      "1CM3",
+      "1COT",
+      "1D7E",
+      "1DMM",
+      "1DYZ",
+      "1E84",
+      "1E97",
+      "1EAZ",
+      "1ECA",
+      "1EFQ",
+      "1EKL",
+      "1EOE",
+      "1FEN",
+      "1FNA",
+      "1FR9",
+      "1G02",
+      "1GE5"
+    ],
+    "duplicate_topology_skip_count": 8,
+    "duplicate_topology_skips": {
+      "187L": "182L",
+      "1AKI": "193L",
+      "1BWJ": "193L",
+      "1C6F": "182L",
+      "1C6K": "182L",
+      "1CAD": "1BQ9",
+      "1FK6": "1FK1",
+      "1G4I": "1BP2"
+    },
+    "unique_upstream_topology_count": 128,
+    "ordered_structures_sha256": "91d5fc13c9edfdb25c924cb19cd68ee3016a4a99c31ba621aa37d028be28160b",
+    "conditioned_on_jtmol_compatibility": false
+  },
+  "comparison_contract": {
+    "dtype": "float32",
+    "score_function": "upstream beta2016_score_function with the exact upstream weighted score-channel set; jtmol must match those channel names and weights exactly.",
+    "timed_forward": "Score evaluation only; construction, setup, rendering, transfer, and compilation are excluded for both backends.",
+    "timed_gradient": "Value plus reverse-mode coordinate gradient over the same scalar sum for both backends.",
+    "coordinates": "Upstream alone owns every coordinate tensor. jtmol native reconstruction is audited separately; score-kernel comparison always consumes the exact upstream float32 bytes when execution layout matches.",
+    "heterogeneous_packing": "Preserve each individually validated pose topology, offsets, inter-residue connections, and inter-block bond separations. Do not replace chains with a synthetic single chain or use an approximate inter_block_bondsep builder.",
+    "validation": "Validate per-channel weighted energies, per-pose per-channel gradients, total energy, and full coordinate gradient on every timed input before accepting a timing result.",
+    "panel_scope": "unconditional_upstream_selected"
+  },
+  "benchmark_scope": {
+    "panel_role": "unconditional_upstream_selected_correctness_and_performance",
+    "conditioned_on_jtmol_compatibility": false,
+    "general_no_compromise_certification": false,
+    "claim_scope": "Canonical-protein panel only. General no-compromise certification additionally requires complete parameter-table, ligand/noncanonical, displaced-coordinate, and active-channel coverage.",
+    "native_coordinate_parity_required": true,
+    "score_kernel_uses_upstream_owned_coordinate_bytes": true
+  },
+  "scenarios": {
+    "s1_k1": {
+      "k": 1,
+      "description": "One structure and one conformation.",
+      "structure": {
+        "pdb_id": "1UBQ",
+        "path": "jtmol/tests/data/1ubq.pdb",
+        "sha256": "7db8f9a82babe6d2719c284567bb7dcba6e1916cc9457b268a0c9473d952abc0"
+      }
+    },
+    "s2_k128_same_topology": {
+      "k": 128,
+      "description": "One 1UBQ topology with 128 distinct conformations.",
+      "topology_count": 1,
+      "structure": {
+        "pdb_id": "1UBQ",
+        "path": "jtmol/tests/data/1ubq.pdb",
+        "sha256": "7db8f9a82babe6d2719c284567bb7dcba6e1916cc9457b268a0c9473d952abc0"
+      },
+      "coordinate_requirement": "The 128-conformation array must be materialized once and supplied identically to both backends."
+    },
+    "s3_k128_different_structures": {
+      "k": 128,
+      "description": "128 official-upstream-loadable structures with 128 distinct upstream semantic topology hashes; selection never consults jtmol.",
+      "topology_count": 128,
+      "pdb_files_committed": false,
+      "modal_mount": "Mount only these files at /root/structures, for example by chaining Image.add_local_file for each manifest entry. Do not use /root/pdb because it can shadow the Python pdb module.",
+      "structures": [
+        {
+          "candidate_index": 0,
+          "pdb_id": "102L",
+          "filename": "102L.pdb",
+          "sha256": "e96bc55c95c60864146612591cbdcebd8a82f9401ab6916b0388e63e3790c6c0",
+          "size_bytes": 148473
+        },
+        {
+          "candidate_index": 1,
+          "pdb_id": "107L",
+          "filename": "107L.pdb",
+          "sha256": "277bfb7d3a3998886a3031415a5da4a5346e7bc4c62d145279d1cbe146c72f77",
+          "size_bytes": 150417
+        },
+        {
+          "candidate_index": 4,
+          "pdb_id": "112L",
+          "filename": "112L.pdb",
+          "sha256": "67efb64097e201b1c00c12ed1d424da0e91c1b24a10849dc760b221cb3bac63a",
+          "size_bytes": 148878
+        },
+        {
+          "candidate_index": 5,
+          "pdb_id": "119L",
+          "filename": "119L.pdb",
+          "sha256": "3a126ef9bc20347c45c5ba42f5c77a000c444a20f37210ffe26153bb7d4a2870",
+          "size_bytes": 150174
+        },
+        {
+          "candidate_index": 7,
+          "pdb_id": "125L",
+          "filename": "125L.pdb",
+          "sha256": "bf9be1e3a6be7637cf306aeaee58fe42550ed0ba322a06999d986e87c9cd9514",
+          "size_bytes": 151389
+        },
+        {
+          "candidate_index": 8,
+          "pdb_id": "132L",
+          "filename": "132L.pdb",
+          "sha256": "4665409b12f9fffe79bafcf50be5a345edf861115af636cba92db8d9224f461e",
+          "size_bytes": 118827
+        },
+        {
+          "candidate_index": 9,
+          "pdb_id": "139L",
+          "filename": "139L.pdb",
+          "sha256": "967bb71b976521dee3cc7cc76d2588eb6067990fe0371f5c7e94a86cb3c7ba22",
+          "size_bytes": 149850
+        },
+        {
+          "candidate_index": 10,
+          "pdb_id": "146L",
+          "filename": "146L.pdb",
+          "sha256": "b11437760144027de9e11d7592c34975da3a34c6b73b4dadf1e7d9f25bd2cbd4",
+          "size_bytes": 148311
+        },
+        {
+          "candidate_index": 11,
+          "pdb_id": "155L",
+          "filename": "155L.pdb",
+          "sha256": "c03ebea6fc2f99966cb2a98eab1d2a64177b8a246548019f5b7beadfec1fb3a9",
+          "size_bytes": 147987
+        },
+        {
+          "candidate_index": 12,
+          "pdb_id": "160L",
+          "filename": "160L.pdb",
+          "sha256": "bb2b15c473cdec8aadc15d5d314f21ae2c7ef2d41b2c5b026b6939a00b013c9b",
+          "size_bytes": 150498
+        },
+        {
+          "candidate_index": 13,
+          "pdb_id": "165L",
+          "filename": "165L.pdb",
+          "sha256": "308fbcfe4683db1f0fa3cc2f992202535c30573d50cd5f9ccaa25945f6c8b8cd",
+          "size_bytes": 148473
+        },
+        {
+          "candidate_index": 14,
+          "pdb_id": "182L",
+          "filename": "182L.pdb",
+          "sha256": "edc2394c51e72915bb208b5d6b1ae4ffbfedbacaada92baa3aeb33592971e509",
+          "size_bytes": 150012
+        },
+        {
+          "candidate_index": 16,
+          "pdb_id": "193L",
+          "filename": "193L.pdb",
+          "sha256": "700b87f87f765d5c453dfe3972d24dade3fc1bc4c28ac3ad6ccefd7426fb0b0a",
+          "size_bytes": 126279
+        },
+        {
+          "candidate_index": 17,
+          "pdb_id": "1A1X",
+          "filename": "1A1X.pdb",
+          "sha256": "7c6d33afb06e62bce61a439c5d90cc086f686b40e1dd5fceaaa5a86d3301a596",
+          "size_bytes": 99468
+        },
+        {
+          "candidate_index": 18,
+          "pdb_id": "1A3D",
+          "filename": "1A3D.pdb",
+          "sha256": "038e89cd69e49f57ed523de6bd1978a39bc31379c95cdb54e163b6259732bfeb",
+          "size_bytes": 117531
+        },
+        {
+          "candidate_index": 19,
+          "pdb_id": "1A5P",
+          "filename": "1A5P.pdb",
+          "sha256": "1e8e52b8e43674e70d21ae2541d2a706ce0c5219bd9f68f4d8356da3c355dbc3",
+          "size_bytes": 114534
+        },
+        {
+          "candidate_index": 20,
+          "pdb_id": "1A68",
+          "filename": "1A68.pdb",
+          "sha256": "821caf6fefbe2f48f0b1d747454dc7f6c1084a8667c10161ad990c02c64d1e13",
+          "size_bytes": 89019
+        },
+        {
+          "candidate_index": 21,
+          "pdb_id": "1A70",
+          "filename": "1A70.pdb",
+          "sha256": "3a0b6e702a70aedfeb0463152ed4ea82955ca997b37dae3441e993da7f146788",
+          "size_bytes": 92259
+        },
+        {
+          "candidate_index": 22,
+          "pdb_id": "1A86",
+          "filename": "1A86.pdb",
+          "sha256": "bebf08ef641a74ed8fc2d3556905f08084f308e0b6217fdecd8ca9b60e1f168c",
+          "size_bytes": 141588
+        },
+        {
+          "candidate_index": 23,
+          "pdb_id": "1AAN",
+          "filename": "1AAN.pdb",
+          "sha256": "5c80d218ef967f023768b61a85f60d3e9980e895d77655a1ac044c3638e91213",
+          "size_bytes": 98091
+        },
+        {
+          "candidate_index": 24,
+          "pdb_id": "1ACF",
+          "filename": "1ACF.pdb",
+          "sha256": "c850d6f6f931c4ae0ba5b38e98ce44214b3f90ce83cba39c8fe3749cdbc5cecc",
+          "size_bytes": 107649
+        },
+        {
+          "candidate_index": 25,
+          "pdb_id": "1AE7",
+          "filename": "1AE7.pdb",
+          "sha256": "0f0cffddd9e36b94801028b9f8b29499034fb8cac2e14109893ecad483e8b10e",
+          "size_bytes": 121986
+        },
+        {
+          "candidate_index": 26,
+          "pdb_id": "1AHR",
+          "filename": "1AHR.pdb",
+          "sha256": "ea9d677e863f2e15aa33d4e9bbd63cfb3a7bb85d99a9a48bb3155d64326cab14",
+          "size_bytes": 139563
+        },
+        {
+          "candidate_index": 28,
+          "pdb_id": "1AKV",
+          "filename": "1AKV.pdb",
+          "sha256": "a94b1d262cabbcca47278184c1c06646fb5250ed865d959a60949038eb0cc24e",
+          "size_bytes": 141264
+        },
+        {
+          "candidate_index": 30,
+          "pdb_id": "1ASU",
+          "filename": "1ASU.pdb",
+          "sha256": "c988ccf1667f25188b6b790d973cb8b34113b418f05ba87fae09985dad7a5d87",
+          "size_bytes": 150012
+        },
+        {
+          "candidate_index": 31,
+          "pdb_id": "1AWD",
+          "filename": "1AWD.pdb",
+          "sha256": "1bb2b7b96ca82793ca910d80d761ebc52ad127da860380ba76890740663d54db",
+          "size_bytes": 176742
+        },
+        {
+          "candidate_index": 32,
+          "pdb_id": "1AZL",
+          "filename": "1AZL.pdb",
+          "sha256": "4967029d83da2d93ce200531fbc6443004cbd45232f3ee6cdb01f19f1e34d814",
+          "size_bytes": 134622
+        },
+        {
+          "candidate_index": 33,
+          "pdb_id": "1B11",
+          "filename": "1B11.pdb",
+          "sha256": "93eaed8225bdb7911951f2de0bcbb3f51edc505b1cf217d2106dabfdc0b6240b",
+          "size_bytes": 115992
+        },
+        {
+          "candidate_index": 34,
+          "pdb_id": "1B1J",
+          "filename": "1B1J.pdb",
+          "sha256": "3ffc4c1528a734e5a78b8784ede636a60029efce1d0969844f2a8a562e5a60e2",
+          "size_bytes": 109674
+        },
+        {
+          "candidate_index": 35,
+          "pdb_id": "1B5U",
+          "filename": "1B5U.pdb",
+          "sha256": "d930f7314495dae30338199bc7fbf4934fadc18a35adc27436cf5ccca8a6f432",
+          "size_bytes": 131220
+        },
+        {
+          "candidate_index": 36,
+          "pdb_id": "1B71",
+          "filename": "1B71.pdb",
+          "sha256": "6554a31885059d67c8effb9a4511753b75d33a783dc8c44cd43ebfd4649af449",
+          "size_bytes": 317682
+        },
+        {
+          "candidate_index": 37,
+          "pdb_id": "1B7N",
+          "filename": "1B7N.pdb",
+          "sha256": "c4048f3f8c0b990aff604796f366872b7a1f5bd49b6b7886a0f480f4fe41fc70",
+          "size_bytes": 142317
+        },
+        {
+          "candidate_index": 38,
+          "pdb_id": "1B7S",
+          "filename": "1B7S.pdb",
+          "sha256": "a900faf691e6201b554af4df70c19b3064bcf84aa5a0d8eaccf98b352c9a26a9",
+          "size_bytes": 134217
+        },
+        {
+          "candidate_index": 39,
+          "pdb_id": "1B8Y",
+          "filename": "1B8Y.pdb",
+          "sha256": "04a5d40d203556f359ebc30501bdbfb8b80145394d52448d2485d2204638753b",
+          "size_bytes": 167103
+        },
+        {
+          "candidate_index": 41,
+          "pdb_id": "1BD8",
+          "filename": "1BD8.pdb",
+          "sha256": "a9d5e4b5b4ec5b9be7e8fd0a8c88cf8aee812bfd1b5917f345c8ae9c13d54a6d",
+          "size_bytes": 143289
+        },
+        {
+          "candidate_index": 42,
+          "pdb_id": "1BEL",
+          "filename": "1BEL.pdb",
+          "sha256": "1c98f87a0f8124e17a7e016f504313e95f97733a37537d586349cf8624a3f7dd",
+          "size_bytes": 115344
+        },
+        {
+          "candidate_index": 44,
+          "pdb_id": "1BJE",
+          "filename": "1BJE.pdb",
+          "sha256": "8290d21e2cb006648d403a6427a0bdfd9435e825d8e80824bbfd6286e8512f93",
+          "size_bytes": 140616
+        },
+        {
+          "candidate_index": 45,
+          "pdb_id": "1BKF",
+          "filename": "1BKF.pdb",
+          "sha256": "d794b33d55d6be5ac86ea99860473bac79a27add881df4835275d8cb4a0695d2",
+          "size_bytes": 111294
+        },
+        {
+          "candidate_index": 46,
+          "pdb_id": "1BP2",
+          "filename": "1BP2.pdb",
+          "sha256": "fd83b2b01c0ab740209d9c37e7793a55e6c4875f1809d973e972a39c551db724",
+          "size_bytes": 124254
+        },
+        {
+          "candidate_index": 47,
+          "pdb_id": "1BQ9",
+          "filename": "1BQ9.pdb",
+          "sha256": "575c8eb564e211697d830ad77b3a5a122182f620a76a34fcf8c949cf5ed91c26",
+          "size_bytes": 82134
+        },
+        {
+          "candidate_index": 49,
+          "pdb_id": "1BUO",
+          "filename": "1BUO.pdb",
+          "sha256": "7af96f821097be5b7c4e5bf8071b75764c7ee54dc7d756540beaec496ebbf9ab",
+          "size_bytes": 120285
+        },
+        {
+          "candidate_index": 50,
+          "pdb_id": "1BVQ",
+          "filename": "1BVQ.pdb",
+          "sha256": "48e0c1501828547a8d1e0c1bdc182441fecc789ee6eb7eeafdbd2924799583ea",
+          "size_bytes": 128061
+        },
+        {
+          "candidate_index": 52,
+          "pdb_id": "1BXU",
+          "filename": "1BXU.pdb",
+          "sha256": "81d99fe575de037698b3514bf1e91edc23e6e45962114b732ed7d4d632684e76",
+          "size_bytes": 86184
+        },
+        {
+          "candidate_index": 53,
+          "pdb_id": "1BYS",
+          "filename": "1BYS.pdb",
+          "sha256": "fb5d80c0b8a499b8e32c8f5751a9900edc6f2231b9c494612d72282f7c27ebed",
+          "size_bytes": 139725
+        },
+        {
+          "candidate_index": 54,
+          "pdb_id": "1BZS",
+          "filename": "1BZS.pdb",
+          "sha256": "b1c202d7a9ad6fde16d5625a6ee1cdc5d4d0c8ff2fff587936a8002548376b7d",
+          "size_bytes": 166131
+        },
+        {
+          "candidate_index": 56,
+          "pdb_id": "1C45",
+          "filename": "1C45.pdb",
+          "sha256": "da4ee7b9854e97252e012242a7cfb8bc00dcedc909ee5bd9fdac1d90d775bbb0",
+          "size_bytes": 130734
+        },
+        {
+          "candidate_index": 57,
+          "pdb_id": "1C5I",
+          "filename": "1C5I.pdb",
+          "sha256": "083ea52debafc646132458ef7664f5b6d8485be5780d8ea30f32f6eb0abc2e07",
+          "size_bytes": 158598
+        },
+        {
+          "candidate_index": 58,
+          "pdb_id": "1C65",
+          "filename": "1C65.pdb",
+          "sha256": "29a0a016eddf26cd9e1a580c06bff4e90d1fe28b0806484848a36c51816e3103",
+          "size_bytes": 147015
+        },
+        {
+          "candidate_index": 61,
+          "pdb_id": "1C6T",
+          "filename": "1C6T.pdb",
+          "sha256": "49b96c4f946b226a89ea6db7672ae3bd4914d069d1459fcc5125d29f8aa411f3",
+          "size_bytes": 148311
+        },
+        {
+          "candidate_index": 62,
+          "pdb_id": "1C8W",
+          "filename": "1C8W.pdb",
+          "sha256": "a62ed66735126506c89c434bafe31d1bd9131e86592e238cd10006e90f255ef9",
+          "size_bytes": 118665
+        },
+        {
+          "candidate_index": 64,
+          "pdb_id": "1CC8",
+          "filename": "1CC8.pdb",
+          "sha256": "1ef070082564c8f7501c866323f917209d7fcb70be1865ca92bd3812855cb4be",
+          "size_bytes": 140859
+        },
+        {
+          "candidate_index": 65,
+          "pdb_id": "1CEH",
+          "filename": "1CEH.pdb",
+          "sha256": "257e7fd2c6599a8a8454a00012a4cf831b7e5dcea674f27e6ba6cacc2b79ab47",
+          "size_bytes": 116883
+        },
+        {
+          "candidate_index": 66,
+          "pdb_id": "1CH1",
+          "filename": "1CH1.pdb",
+          "sha256": "1445441e20ac4a45799bbc9a993e6f7431852b8b47345bd571e887f0d23db9d6",
+          "size_bytes": 150093
+        },
+        {
+          "candidate_index": 67,
+          "pdb_id": "1CHH",
+          "filename": "1CHH.pdb",
+          "sha256": "04947a5e6101c3d1d45f2e777829cff2f0d7e87cb61779a0a8b767a433502ea7",
+          "size_bytes": 118908
+        },
+        {
+          "candidate_index": 68,
+          "pdb_id": "1CIE",
+          "filename": "1CIE.pdb",
+          "sha256": "ff1dc5e3e728760b2a17b49592680976eade45933c352afeb124b3afd5614d34",
+          "size_bytes": 117045
+        },
+        {
+          "candidate_index": 69,
+          "pdb_id": "1CIO",
+          "filename": "1CIO.pdb",
+          "sha256": "9c48f6dff6e167198d2015864c88b39b08f24bdd224b5d9a39f9bec60f174d90",
+          "size_bytes": 147501
+        },
+        {
+          "candidate_index": 70,
+          "pdb_id": "1CJ9",
+          "filename": "1CJ9.pdb",
+          "sha256": "e6f5f3f2de4e7cc9602b4b1b7d3343705406be3f656209d6535360f5c888ae48",
+          "size_bytes": 129600
+        },
+        {
+          "candidate_index": 71,
+          "pdb_id": "1CKH",
+          "filename": "1CKH.pdb",
+          "sha256": "04143371dec4fb1f5ec8797497ca4e069e8b5f8cec2971b126fdc98a4574b84e",
+          "size_bytes": 126522
+        },
+        {
+          "candidate_index": 74,
+          "pdb_id": "1CRG",
+          "filename": "1CRG.pdb",
+          "sha256": "51aac85e9cdf9db296a77470f91e4c14765014330b701dcae52ff6307f3514ac",
+          "size_bytes": 116964
+        },
+        {
+          "candidate_index": 75,
+          "pdb_id": "1CSU",
+          "filename": "1CSU.pdb",
+          "sha256": "974eeac107f41fdb5af32a38be1dec5d36171bc672f13b14c45b452896802752",
+          "size_bytes": 117126
+        },
+        {
+          "candidate_index": 76,
+          "pdb_id": "1CTJ",
+          "filename": "1CTJ.pdb",
+          "sha256": "e18b7ecf19acf4c7bc75eacd5da3cd47e5d4481263b7bd7af9ea0eb269cd27eb",
+          "size_bytes": 177552
+        },
+        {
+          "candidate_index": 77,
+          "pdb_id": "1CUP",
+          "filename": "1CUP.pdb",
+          "sha256": "d411748be2b381666ad411aeb41304e4436694e8ec6857dfb3bc2fe26fcb7c72",
+          "size_bytes": 152361
+        },
+        {
+          "candidate_index": 78,
+          "pdb_id": "1CV8",
+          "filename": "1CV8.pdb",
+          "sha256": "a2f98a77fffeeb8b0a6e920a38ab51808cd971d3e00c0df2e7c81cf766a5811e",
+          "size_bytes": 158193
+        },
+        {
+          "candidate_index": 79,
+          "pdb_id": "1CXU",
+          "filename": "1CXU.pdb",
+          "sha256": "cb0db2704fe7176db900e599de64659629669258555e37e5935cffaae5a2b1d1",
+          "size_bytes": 146043
+        },
+        {
+          "candidate_index": 80,
+          "pdb_id": "1CYO",
+          "filename": "1CYO.pdb",
+          "sha256": "d7e6844fffd878306c1f3a75b84c7236d6cdd6399997f0fe0f1b9613b76bed67",
+          "size_bytes": 106920
+        },
+        {
+          "candidate_index": 81,
+          "pdb_id": "1CZL",
+          "filename": "1CZL.pdb",
+          "sha256": "18c1abe4e24d5318b3789665852210a0bae4734379d9a52bd400a22f7d848576",
+          "size_bytes": 152928
+        },
+        {
+          "candidate_index": 82,
+          "pdb_id": "1CZT",
+          "filename": "1CZT.pdb",
+          "sha256": "5d6b85ab720429a195154216e12787df69123f9937d68937d15705dbbd7580e5",
+          "size_bytes": 139725
+        },
+        {
+          "candidate_index": 83,
+          "pdb_id": "1D2S",
+          "filename": "1D2S.pdb",
+          "sha256": "b93af0185446a9685219bd13b8a855174c7fb9b2676bd5989454eaa611b8cfe8",
+          "size_bytes": 163701
+        },
+        {
+          "candidate_index": 84,
+          "pdb_id": "1D3S",
+          "filename": "1D3S.pdb",
+          "sha256": "ac5741113cb809de67e9a8a40adada87528541837fda96491aa1d1054ebd3249",
+          "size_bytes": 178038
+        },
+        {
+          "candidate_index": 86,
+          "pdb_id": "1DET",
+          "filename": "1DET.pdb",
+          "sha256": "5c96088008abccc416dad20e699c91f547549e3f8cf64405042ade2f5b3e102d",
+          "size_bytes": 116235
+        },
+        {
+          "candidate_index": 87,
+          "pdb_id": "1DG6",
+          "filename": "1DG6.pdb",
+          "sha256": "468d34004dd32edc0d3a46b453ac8d8ac56d1482577d3c59fe71751c6eaa4dc3",
+          "size_bytes": 162243
+        },
+        {
+          "candidate_index": 88,
+          "pdb_id": "1DI3",
+          "filename": "1DI3.pdb",
+          "sha256": "3ccadd82d75c55c27aa1ddf622bb1a7feda3b7741b9145062411663135e43c08",
+          "size_bytes": 127575
+        },
+        {
+          "candidate_index": 89,
+          "pdb_id": "1DKJ",
+          "filename": "1DKJ.pdb",
+          "sha256": "d512e2f714457409b118a2451978f1fd08435ef6b42a96b9ddbca0d55ca45b1a",
+          "size_bytes": 114210
+        },
+        {
+          "candidate_index": 91,
+          "pdb_id": "1DO7",
+          "filename": "1DO7.pdb",
+          "sha256": "2e11310332134ec68921a3bcff576b926fd4f0304de03ea1fe9276186603e5c0",
+          "size_bytes": 157788
+        },
+        {
+          "candidate_index": 92,
+          "pdb_id": "1DQG",
+          "filename": "1DQG.pdb",
+          "sha256": "b0f8e3f74b5947b0e001aa7878abef0e72bc42933a07c54f21240b763690a546",
+          "size_bytes": 119961
+        },
+        {
+          "candidate_index": 93,
+          "pdb_id": "1DTI",
+          "filename": "1DTI.pdb",
+          "sha256": "4e1d8fffbd02f1528b240d18e7948fbd2d570391623dc5398e44b22368d79020",
+          "size_bytes": 140211
+        },
+        {
+          "candidate_index": 94,
+          "pdb_id": "1DUS",
+          "filename": "1DUS.pdb",
+          "sha256": "6d652d075723cb81e0f3f9c97e96d2c97e99b78792f07e8fbf81f16f49b5d485",
+          "size_bytes": 167427
+        },
+        {
+          "candidate_index": 95,
+          "pdb_id": "1DWT",
+          "filename": "1DWT.pdb",
+          "sha256": "aba3d2a455798ff0c3029917ed5d3098482227cb4b729e1712075bcf5d3db639",
+          "size_bytes": 150741
+        },
+        {
+          "candidate_index": 96,
+          "pdb_id": "1DYA",
+          "filename": "1DYA.pdb",
+          "sha256": "b4f23cf31e82b6f1e1702796b2336772ee3b84fe842e6e5081b6864e2ec23333",
+          "size_bytes": 151389
+        },
+        {
+          "candidate_index": 98,
+          "pdb_id": "1E29",
+          "filename": "1E29.pdb",
+          "sha256": "f75becbecb8465cdcb82904f7ca1e5abd6734ddaeda11a74a7adb2f0d26938f3",
+          "size_bytes": 261306
+        },
+        {
+          "candidate_index": 104,
+          "pdb_id": "1EIE",
+          "filename": "1EIE.pdb",
+          "sha256": "28f25a0f61176a91c3747a6f85f200c88fa12e45b28b4db2c0517a4a33717256",
+          "size_bytes": 124254
+        },
+        {
+          "candidate_index": 105,
+          "pdb_id": "1EJ2",
+          "filename": "1EJ2.pdb",
+          "sha256": "acdbf4b3ba1fc9b800b938627ee6e56c24285b60bf8239546ed13468e99aa805",
+          "size_bytes": 162810
+        },
+        {
+          "candidate_index": 107,
+          "pdb_id": "1EN2",
+          "filename": "1EN2.pdb",
+          "sha256": "487c899afdf70d5831e7e6599a3ae1d42eb7545256ac833218c281c0da2be1b7",
+          "size_bytes": 110484
+        },
+        {
+          "candidate_index": 109,
+          "pdb_id": "1EQ4",
+          "filename": "1EQ4.pdb",
+          "sha256": "d315a11f1186ae705f162695c5fd695adb6de3c4217e394bd0023ec9944479d0",
+          "size_bytes": 132111
+        },
+        {
+          "candidate_index": 110,
+          "pdb_id": "1EQE",
+          "filename": "1EQE.pdb",
+          "sha256": "0b5b2545e995e9a31b7c0f1e7d0bffa93a87e2353419545d6650f8d8312903a2",
+          "size_bytes": 130329
+        },
+        {
+          "candidate_index": 111,
+          "pdb_id": "1ERV",
+          "filename": "1ERV.pdb",
+          "sha256": "3bcc294bc84d8d72aab1bb252191f1ef106b87a3646503fa574726702da5e19b",
+          "size_bytes": 96552
+        },
+        {
+          "candidate_index": 112,
+          "pdb_id": "1ESR",
+          "filename": "1ESR.pdb",
+          "sha256": "ff5f0454963d62f9c09916b8bd258baf1a82b37c0d573246d08c6949df852772",
+          "size_bytes": 86427
+        },
+        {
+          "candidate_index": 113,
+          "pdb_id": "1EW4",
+          "filename": "1EW4.pdb",
+          "sha256": "d80bbaa6b660fdc0ae36cf95adab82ee34c897549ee20af5ad869e79b65ad218",
+          "size_bytes": 103356
+        },
+        {
+          "candidate_index": 114,
+          "pdb_id": "1EY0",
+          "filename": "1EY0.pdb",
+          "sha256": "9f8fe36f863a66b550c479b3544d0a88d782a66241c63828f57ed3a57a66b714",
+          "size_bytes": 123930
+        },
+        {
+          "candidate_index": 115,
+          "pdb_id": "1EY8",
+          "filename": "1EY8.pdb",
+          "sha256": "cf95156412b11fe361a2ceb0fc76f96f56cc4155f7a7e93a0fe0627096f18aac",
+          "size_bytes": 121500
+        },
+        {
+          "candidate_index": 116,
+          "pdb_id": "1EYH",
+          "filename": "1EYH.pdb",
+          "sha256": "729c3dcd43c289beb5d31859bc39d9591f7c6fc03ceae0269347565ce5c70989",
+          "size_bytes": 135513
+        },
+        {
+          "candidate_index": 117,
+          "pdb_id": "1EZJ",
+          "filename": "1EZJ.pdb",
+          "sha256": "f9eaf121f907da48fdc230148b44dbc099da573f14f0abca1e27856ae5c2ccc2",
+          "size_bytes": 119313
+        },
+        {
+          "candidate_index": 118,
+          "pdb_id": "1F1A",
+          "filename": "1F1A.pdb",
+          "sha256": "b7b79c3aa84100ca30c937a9efd7fd6640af2afe1da6bbea5b1eaf33985fd3b3",
+          "size_bytes": 133245
+        },
+        {
+          "candidate_index": 119,
+          "pdb_id": "1F2Y",
+          "filename": "1F2Y.pdb",
+          "sha256": "955847573e078e2a3b1b704dcdf4804a77096d4b4b74a51bb13e344b5c8868ed",
+          "size_bytes": 116640
+        },
+        {
+          "candidate_index": 120,
+          "pdb_id": "1F5B",
+          "filename": "1F5B.pdb",
+          "sha256": "9e71a2885cda0ecf10d320b302169632dbf3aecf207775c44d2dac444e758ec8",
+          "size_bytes": 120528
+        },
+        {
+          "candidate_index": 121,
+          "pdb_id": "1F7S",
+          "filename": "1F7S.pdb",
+          "sha256": "b45757b4caedb6b4386e5d27debffc5a9dd503a738091feed4c6cfa5aa2c04b7",
+          "size_bytes": 120042
+        },
+        {
+          "candidate_index": 122,
+          "pdb_id": "1F9P",
+          "filename": "1F9P.pdb",
+          "sha256": "453bd5593cbbd62f30557c525fb17e0524265d3592bf9bef9a19a67e9113c215",
+          "size_bytes": 92340
+        },
+        {
+          "candidate_index": 123,
+          "pdb_id": "1FAZ",
+          "filename": "1FAZ.pdb",
+          "sha256": "8dc44420f85ab9dbf96f0803212008b31066894577641ecd5e477f2e2faf4f40",
+          "size_bytes": 110241
+        },
+        {
+          "candidate_index": 124,
+          "pdb_id": "1FDD",
+          "filename": "1FDD.pdb",
+          "sha256": "d589e00cbf7edf4696ce10c045f3159015d5e00dd44256f61129e624399025e5",
+          "size_bytes": 115749
+        },
+        {
+          "candidate_index": 126,
+          "pdb_id": "1FHM",
+          "filename": "1FHM.pdb",
+          "sha256": "f84cde62a24176b10b3dcaf1fecb1a621663ec4e9faef8e26f5c7135888be4fe",
+          "size_bytes": 69093
+        },
+        {
+          "candidate_index": 127,
+          "pdb_id": "1FK1",
+          "filename": "1FK1.pdb",
+          "sha256": "0e7bc0186eeab240b5d16964b2e8190ce24170793836e18ca02625a2eb1fe574",
+          "size_bytes": 84888
+        },
+        {
+          "candidate_index": 129,
+          "pdb_id": "1FKG",
+          "filename": "1FKG.pdb",
+          "sha256": "e198e1ebb0f15bce9cb972839c9f1cbb60c28b75bc760148f931fcc6cb9c270e",
+          "size_bytes": 135999
+        },
+        {
+          "candidate_index": 130,
+          "pdb_id": "1FKV",
+          "filename": "1FKV.pdb",
+          "sha256": "11636cabf8effcdef8fd9d16c698f4ff3ffd8bd895802349ff87c363ee7c4d92",
+          "size_bytes": 114048
+        },
+        {
+          "candidate_index": 131,
+          "pdb_id": "1FLP",
+          "filename": "1FLP.pdb",
+          "sha256": "e1308ba2554174f2b99d914b24d1a7187e16eb2f4e1f6f175a17d1b253c8aadc",
+          "size_bytes": 126198
+        },
+        {
+          "candidate_index": 132,
+          "pdb_id": "1FLY",
+          "filename": "1FLY.pdb",
+          "sha256": "29eb3023f2a3f0ac0bc425d17ce34ded37529e805e3d969a87629af7e378faff",
+          "size_bytes": 110484
+        },
+        {
+          "candidate_index": 135,
+          "pdb_id": "1FSO",
+          "filename": "1FSO.pdb",
+          "sha256": "02cd4f888be5ab9e5b544342d76972127818674c23d47d40e05ba236661edacb",
+          "size_bytes": 132435
+        },
+        {
+          "candidate_index": 136,
+          "pdb_id": "1FVG",
+          "filename": "1FVG.pdb",
+          "sha256": "db6304f58be77daa83a9b339929ed64a22ee97241b477c1fa800c958951deb60",
+          "size_bytes": 170100
+        },
+        {
+          "candidate_index": 137,
+          "pdb_id": "1FX1",
+          "filename": "1FX1.pdb",
+          "sha256": "bd62030ffe1ea4f3d8c60fb794fdcd052aed636cade99ecfd0d3ceb9ebe3cd40",
+          "size_bytes": 136242
+        },
+        {
+          "candidate_index": 139,
+          "pdb_id": "1G0K",
+          "filename": "1G0K.pdb",
+          "sha256": "3d19b2b0cd9b9c458dcf4ed4adcb36f7b7690e29fa4ddba8650999337958b227",
+          "size_bytes": 149121
+        },
+        {
+          "candidate_index": 140,
+          "pdb_id": "1G12",
+          "filename": "1G12.pdb",
+          "sha256": "c2c7a2c24dfb205c08b1605af1152ef55b3370d7f51ef75bbc2f10dfd63a89f7",
+          "size_bytes": 148149
+        },
+        {
+          "candidate_index": 141,
+          "pdb_id": "1G2B",
+          "filename": "1G2B.pdb",
+          "sha256": "bc654d923792e2c3da60a5b571ce6db0210739a99b0ef4b5651a1232a894dada",
+          "size_bytes": 140292
+        },
+        {
+          "candidate_index": 143,
+          "pdb_id": "1G7N",
+          "filename": "1G7N.pdb",
+          "sha256": "da6ba8da24f62bc849f825700160db833d3fbbc0b0be5ab4a19fd090d66a8d89",
+          "size_bytes": 124902
+        },
+        {
+          "candidate_index": 144,
+          "pdb_id": "1GAY",
+          "filename": "1GAY.pdb",
+          "sha256": "2eaf4870d825b3fb6cd3078b4ffeafcfe962c152659e31b24bae1bc88a0134fe",
+          "size_bytes": 135351
+        },
+        {
+          "candidate_index": 145,
+          "pdb_id": "1GB5",
+          "filename": "1GB5.pdb",
+          "sha256": "d770202b9178bd957464cc2980585ba6a140b29c9670bdb93bdaf6ab2e3da91e",
+          "size_bytes": 136971
+        },
+        {
+          "candidate_index": 146,
+          "pdb_id": "1GBJ",
+          "filename": "1GBJ.pdb",
+          "sha256": "306ad106ca82ceadc7c45178d46fff18168e7c5779bc8b5acb9a41d09becaaf4",
+          "size_bytes": 159975
+        },
+        {
+          "candidate_index": 147,
+          "pdb_id": "1GBY",
+          "filename": "1GBY.pdb",
+          "sha256": "fefbedd45b5490522c7ad9d2b330b74a0f9c08e21cae8bb57fa176475e1d3275",
+          "size_bytes": 135270
+        },
+        {
+          "candidate_index": 148,
+          "pdb_id": "1GDK",
+          "filename": "1GDK.pdb",
+          "sha256": "a460fb61a7aa4bf69b8a800ced6a0ee414e346e606f26d087133db998a5f312c",
+          "size_bytes": 160866
+        },
+        {
+          "candidate_index": 149,
+          "pdb_id": "1GE0",
+          "filename": "1GE0.pdb",
+          "sha256": "89c2afe5520bb925d3a225e8f0dc53e76371432dd126d7f740fe6fa3e553681e",
+          "size_bytes": 132759
+        },
+        {
+          "candidate_index": 151,
+          "pdb_id": "1GF5",
+          "filename": "1GF5.pdb",
+          "sha256": "3f6498f0e65b42ab18496e90f41c2e2619394042c573ce2443b003164d30b0c2",
+          "size_bytes": 133164
+        },
+        {
+          "candidate_index": 152,
+          "pdb_id": "1GFA",
+          "filename": "1GFA.pdb",
+          "sha256": "026e21d937d738135b23bf94f1abd5f25e2a03bede72009f53ee02489a02ac5e",
+          "size_bytes": 134865
+        },
+        {
+          "candidate_index": 153,
+          "pdb_id": "1GFK",
+          "filename": "1GFK.pdb",
+          "sha256": "82154d4864a06f56d28cdafc83731d2b3ae3ad176ff8b5a8619c89f0577e8dbb",
+          "size_bytes": 136890
+        },
+        {
+          "candidate_index": 154,
+          "pdb_id": "1GGZ",
+          "filename": "1GGZ.pdb",
+          "sha256": "d615c35e3dcf9a9b6321f26651a4caad1af9788f70d20eab3eb2cd358c9572ad",
+          "size_bytes": 157059
+        },
+        {
+          "candidate_index": 155,
+          "pdb_id": "1GMB",
+          "filename": "1GMB.pdb",
+          "sha256": "ff109e5dac23cb21b5a73641c3dc063bf9a1633ecf3753c2cffa12d63559778c",
+          "size_bytes": 141831
+        },
+        {
+          "candidate_index": 156,
+          "pdb_id": "1GNR",
+          "filename": "1GNR.pdb",
+          "sha256": "953fb0f99171a94ab04acac381fff2874ce82289e25306deb0da1c32d53f2390",
+          "size_bytes": 160785
+        },
+        {
+          "candidate_index": 157,
+          "pdb_id": "1GOC",
+          "filename": "1GOC.pdb",
+          "sha256": "454ece732da16d086d4c935aaa58fb6d0dd8d81c720c7cc70d0aca262e274f60",
+          "size_bytes": 138915
+        },
+        {
+          "candidate_index": 158,
+          "pdb_id": "1GQV",
+          "filename": "1GQV.pdb",
+          "sha256": "a3fc083b86dfecd5a6d4ccb841df107a47c153aff79f6444e31535e2d8ff116d",
+          "size_bytes": 420228
+        },
+        {
+          "candidate_index": 159,
+          "pdb_id": "1GSX",
+          "filename": "1GSX.pdb",
+          "sha256": "691ed0fb0ce9a732f65123c4555b142b84a548c2e94fb273b0be09770811ffd9",
+          "size_bytes": 115263
+        },
+        {
+          "candidate_index": 160,
+          "pdb_id": "1GV8",
+          "filename": "1GV8.pdb",
+          "sha256": "cb3aa2296830c77ddad0b3e67c63b2490314de59d398be0d32b28b7ec2e9fabe",
+          "size_bytes": 143532
+        }
+      ]
+    }
+  },
+  "jtmol_coverage_audit": {
+    "not_a_selection_filter": true,
+    "load_failure_count": 0,
+    "execution_layout_failure_count_after_load": 0,
+    "canonical_coordinate_failure_count_after_layout_at_1e-4_angstrom": 29,
+    "jointly_compatible_count": 99,
+    "coordinate_failures_max_abs_angstrom": {
+      "193L": 3.3115367889404297,
+      "1AWD": 5.22900390625,
+      "1B11": 2.2654306888580322,
+      "1B71": 8.369281768798828,
+      "1BQ9": 5.374944686889648,
+      "1C8W": 6.028969764709473,
+      "1CTJ": 8.918000102043152,
+      "1CXU": 4.320499420166016,
+      "1CYO": 4.993155479431152,
+      "1CZL": 3.3913002014160156,
+      "1D2S": 7.4796483516693115,
+      "1D3S": 2.3926620483398438,
+      "1DET": 2.720142364501953,
+      "1DG6": 9.935962677001953,
+      "1E29": 3.5228347778320312,
+      "1EN2": 5.9830968379974365,
+      "1ERV": 2.4304347038269043,
+      "1ESR": 3.5845184326171875,
+      "1EY0": 6.544573783874512,
+      "1EY8": 6.074369430541992,
+      "1EYH": 3.8089561462402344,
+      "1EZJ": 1.4399948120117188,
+      "1F5B": 2.484222412109375,
+      "1G2B": 7.26200008392334,
+      "1G7N": 4.3341522216796875,
+      "1GDK": 6.103359222412109,
+      "1GNR": 10.986000061035156,
+      "1GQV": 6.665000915527344,
+      "1GV8": 3.2059993743896484
+    },
+    "representation_metadata_mismatch_count": 128
+  }
+}

@@ -1,0 +1,25 @@
+jtmol
+Copyright 2026 the jtmol authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+This product is a pure-JAX port of tmol and includes work derived from it:
+
+  tmol: https://github.com/uw-ipd/tmol
+  Copyright the Institute for Protein Design, University of Washington.
+  Licensed under the Apache License, Version 2.0.
+
+The energy function reproduced here is Rosetta's beta_nov2016_cart, developed
+by the Baker Lab / RosettaCommons. Scoring parameters and binary tables under
+jtmol/database/ (including the Dunbrack rotamer libraries and Ramachandran
+data) originate from that lineage and are redistributed as they are in
+upstream tmol. Users making commercial use of the underlying Rosetta database
+should confirm their own licensing with the University of Washington.
+
+Scientific references:
+  Park et al., J. Chem. Theory Comput. 2016, 12 (12), 6201-6212.
+  Alford et al., J. Chem. Theory Comput. 2017, 13 (6), 3031-3048.

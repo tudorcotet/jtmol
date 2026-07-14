@@ -1,0 +1,48 @@
+version: "1.0"
+# Single-atom Zn(II) residue for PoseStack construction.
+#
+# Loads through the same ligand `.tmol` params mechanism as the cdk2 LG1
+# ligand (jtmol/ligand/params_file.py). The one wrinkle a metal ion has
+# over a normal ligand is that it is a SINGLE atom, so it cannot use three
+# real atoms as an icoor root frame the way LG1's root (N5 <- C4 <- C7) does.
+#
+# Solution: a self-referential icoor. parent/grand_parent/great_grand_parent
+# all name ZN itself, so `_setup_icoors_ancestors` resolves every ancestor to
+# index 0 (a trivial identity frame), and `build_coords_from_icoors` places
+# the lone atom at the origin (its n_atoms<=1 fast path). No virtual stub
+# atoms needed.
+chemical:
+  residues:
+  - name: ZN
+    base_name: ZN
+    name3: ZN
+    io_equiv_class: ZN
+    atoms:
+    - {name: ZN, atom_type: Zn2p}
+    bonds: []
+    icoors:
+    - {name: ZN, phi: 0.0 deg, theta: 0.0 deg, d: 0.0, parent: ZN, grand_parent: ZN, great_grand_parent: ZN}
+    properties:
+      is_canonical: false
+      polymer:
+        is_polymer: false
+        polymer_type: NA
+        backbone_type: NA
+        mainchain_atoms: null
+        sidechain_chirality: NA
+        termini_variants: []
+      chemical_modifications: []
+      connectivity: []
+      protonation:
+        protonated_atoms: []
+        protonation_state: neutral
+        pH: 7
+      virtual: []
+    chi_samples: []
+    default_jump_connection_atom: ZN
+elec:
+  # +2 formal charge on the ion. Standard divalent cation; flows into fa_elec
+  # via the same atom_charge_parameters path as the ligand.
+  atom_charge_parameters:
+  - {res: ZN, atom: ZN, charge: 2.0}
+cartbonded: {}
