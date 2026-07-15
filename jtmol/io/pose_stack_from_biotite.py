@@ -507,17 +507,42 @@ def _extended_co_pbt_for_ligands(
     # block) on each ligand RefinedResidueType so the fa_elec term picks
     # them up via ``_charges_for_block_type``. Keyed {res_name: {atom: q}}.
     ligand_charges: Dict[str, Dict[str, float]] = {}
+    ligand_bond_orders: Dict[str, Any] = {}
+    ligand_formal_charges: Dict[str, Dict[str, int]] = {}
     for lp in parsed_files:
         for (res_name, atom_name), q in getattr(lp, "atom_charges", {}).items():
             ligand_charges.setdefault(res_name, {})[atom_name] = float(q)
+        ligand_bond_orders.update(getattr(lp, "bond_orders", {}))
+        for (res_name, atom_name), q in getattr(
+            lp, "atom_formal_charges", {}
+        ).items():
+            ligand_formal_charges.setdefault(res_name, {})[atom_name] = int(q)
+    active_restypes = list(base_pbt.active_block_types) + ligand_refined
+    # Only annotate the freshly-built ligand residue types. Mutating an active
+    # protein residue type here would contaminate the caller/default palette
+    # when a ligand happens to reuse a protein name (and SER_acyl is
+    # intentionally created later with no guessed charge table).
     for rr in ligand_refined:
         q = ligand_charges.get(rr.name) or ligand_charges.get(rr.name3)
         if q:
             rr.elec_partial_charges = q
+        # Preserve state-defining metadata even though current score terms
+        # intentionally do not consume it. This lets callers audit GS C=O
+        # versus TI C-O and formal-charge changes exactly.
+        rr.state_bond_orders = tuple(
+            ligand_bond_orders.get(rr.name)
+            or ligand_bond_orders.get(rr.name3)
+            or ()
+        )
+        rr.atom_formal_charges = dict(
+            ligand_formal_charges.get(rr.name)
+            or ligand_formal_charges.get(rr.name3)
+            or {}
+        )
 
     pbt = PackedBlockTypes.from_restypes(
         base_pbt.chem_db,
-        list(base_pbt.active_block_types) + ligand_refined,
+        active_restypes,
     )
     return co, pbt
 
@@ -611,6 +636,8 @@ def pose_stack_from_biotite(
     packed_block_types: Optional[Any] = None,
     missing_density_distance_threshold: float = 2.4,
     ligand_params_files: Optional[Sequence[Any]] = None,
+    covalent_bonds: Optional[Sequence[Any]] = None,
+    covalent_state_mode: Optional[str] = None,
     **kwargs: Any,
 ):
     """Build a :class:`PoseStack` from a biotite ``AtomArray`` / ``AtomArrayStack``.
@@ -628,6 +655,26 @@ def pose_stack_from_biotite(
     missing_density_distance_threshold:
         Å threshold above which an adjacent-residue connection is treated
         as broken. Set to 0 to disable. Default 2.4.
+    covalent_bonds:
+        Optional list of explicit inter-residue covalent bonds, each a pair
+        of ``(chain, resnum, atom)`` atom specs, e.g.
+        ``[(("A", 160, "OG"), ("B", 501, "C7"))]`` to bond a catalytic
+        Ser-Ogamma to a ligand carbon. Each side is resolved to a residue and
+        wired through the same connection + bond-separation machinery the
+        disulfide detector uses (so ``count_pair`` sees path length 1 across
+        the bond). A protein nucleophile atom (e.g. Ser ``OG``) forces the
+        residue to the connection-bearing variant (``SER_acyl``); if the
+        residue lacks that atom (a knockout, e.g. Ser->Ala) the bond
+        *cannot* form and loading raises -- the categorical guard.
+    covalent_state_mode:
+        Required when ``covalent_bonds`` is non-empty. The only supported
+        value is currently ``"topology_only"``: it builds and validates the
+        atom/bond graph for geometry analysis, but deliberately marks the
+        resulting palette as unscoreable. ``"parameterized"`` fails closed
+        until jtmol preserves bond orders in its scoring graph and consumes
+        state-specific cartbonded/charge parameters. This prevents the old
+        silent-zero acyl-serine electrostatics from being reported as a TI
+        energy.
     **kwargs:
         Forwarded to ``jtmol.io.pose_stack_construction.pose_stack_from_canonical_form``
         when that module is available.
@@ -638,6 +685,29 @@ def pose_stack_from_biotite(
         A ``PoseStack`` built from the canonical form.
     """
     _require_biotite()
+    if covalent_bonds:
+        if covalent_state_mode is None:
+            raise ValueError(
+                "covalent_bonds requires covalent_state_mode='topology_only'; "
+                "jtmol cannot yet produce a chemically parameterized covalent "
+                "state energy"
+            )
+        if covalent_state_mode == "parameterized":
+            raise NotImplementedError(
+                "parameterized covalent-state scoring is not implemented: "
+                "RawResidueType collapses bond order, ligand cartbonded "
+                "parameters are not consumed, and SER_acyl has no calibrated "
+                "state-specific partial charges"
+            )
+        if covalent_state_mode != "topology_only":
+            raise ValueError(
+                "covalent_state_mode must be 'topology_only' (the only "
+                f"currently supported mode), got {covalent_state_mode!r}"
+            )
+        kwargs["covalent_bonds"] = covalent_bonds
+        kwargs["covalent_state_mode"] = covalent_state_mode
+    elif covalent_state_mode is not None:
+        raise ValueError("covalent_state_mode requires a non-empty covalent_bonds list")
 
     # Ligand path: route through build_context_from_biotite so the ligand
     # restype enters the (extended) canonical ordering + packed block
@@ -653,7 +723,10 @@ def pose_stack_from_biotite(
             ligand_params_files=ligand_params_files,
         )
         return _build_via_bridge_or_fallback(
-            ctx.canonical_form, ctx.packed_block_types, ctx.canonical_ordering, **kwargs
+            ctx.canonical_form,
+            ctx.packed_block_types,
+            ctx.canonical_ordering,
+            **kwargs,
         )
 
     co = canonical_ordering or canonical_ordering_for_biotite()
@@ -685,7 +758,12 @@ def _build_via_bridge_or_fallback(cf, pbt, co, **kwargs):
         from jtmol.io.pose_stack_construction import (  # type: ignore
             pose_stack_from_canonical_form,
         )
-    except Exception:
+    except Exception as exc:
+        if kwargs.get("covalent_bonds"):
+            raise RuntimeError(
+                "covalent topology construction requires the canonical-form "
+                "bridge; refusing the non-covalent fallback"
+            ) from exc
         return _pose_stack_from_canonical_form_fallback(pbt, cf)
 
     if isinstance(cf, dict) and "canonical_ordering" not in cf and co is not None:

@@ -295,7 +295,8 @@ def _mmff94_charges_from_mol(mol) -> Optional[list[float]]:
 
 def build_ligand_params_dict(mol, assignments, res_name: str,
                              charges: Optional[list[float]] = None,
-                             keep_input_names: bool = False) -> dict:
+                             keep_input_names: bool = False,
+                             connections: Optional[list[dict]] = None) -> dict:
     """Assemble the ``.xtal-lig.mmff94.tmol`` dict from a typed RDKit mol.
 
     ``assignments`` is the list of
@@ -309,6 +310,14 @@ def build_ligand_params_dict(mol, assignments, res_name: str,
     match ordinary ligand-PDB atom names. Set True to instead keep the input
     MOL2's own atom names verbatim. Use this when you will score a structure
     that carries those exact names.
+
+    ``connections``: optional list of ``{"name": ..., "atom": ...}`` dicts
+    declaring outgoing inter-residue connection points on the ligand (e.g.
+    ``[{"name": "lg_c", "atom": "C7"}]`` for the electrophilic carbon that a
+    protein nucleophile attacks). Each ``atom`` must be one of the emitted
+    atom names (``keep_input_names`` decides which naming scheme). These are
+    what the covalent-bond loader seam wires to a protein connection; see
+    :mod:`jtmol.io.pose_stack_from_biotite` (``covalent_bonds=``).
     """
     from rdkit import Chem
 
@@ -373,23 +382,46 @@ def build_ligand_params_dict(mol, assignments, res_name: str,
     charge_rows = [{"res": res_name, "atom": names[i], "charge": charges[i]}
                    for i in range(n)]
 
+    residue: dict = {
+        "name": res_name, "base_name": res_name, "name3": res_name,
+        "io_equiv_class": res_name, "atoms": atoms, "atom_aliases": [],
+        "bonds": bonds, "icoors": icoors,
+    }
+    if connections:
+        valid_names = {a["name"] for a in atoms}
+        connection_names = [str(c["name"]) for c in connections]
+        if len(connection_names) != len(set(connection_names)):
+            raise ValueError(
+                f"duplicate connection name for ligand {res_name}: "
+                f"{connection_names}"
+            )
+        for c in connections:
+            if c["atom"] not in valid_names:
+                raise ValueError(
+                    f"connection {c['name']!r} references atom {c['atom']!r} "
+                    f"not in ligand {res_name} (atoms: {sorted(valid_names)}). "
+                    "With keep_input_names=False the heavy atoms are named "
+                    "N1/C1/... -- pass keep_input_names=True to declare "
+                    "connections against the input MOL2's own atom names.")
+        residue["connections"] = [
+            {"name": str(c["name"]), "atom": str(c["atom"])} for c in connections
+        ]
+
     return {
         "version": "1.0",
-        "chemical": {"residues": [{
-            "name": res_name, "base_name": res_name, "name3": res_name,
-            "io_equiv_class": res_name, "atoms": atoms, "atom_aliases": [],
-            "bonds": bonds, "icoors": icoors,
-        }]},
+        "chemical": {"residues": [residue]},
         "elec": {"atom_charge_parameters": charge_rows},
     }
 
 
 def mol2_to_params_dict(mol2_path: str | Path, res_name: str = "LG1",
-                        keep_input_names: bool = False) -> dict:
+                        keep_input_names: bool = False,
+                        connections: Optional[list[dict]] = None) -> dict:
     """Read a MOL2, type it, and build the full params dict.
 
     ``keep_input_names`` keeps the MOL2's own atom names (see
-    :func:`build_ligand_params_dict`).
+    :func:`build_ligand_params_dict`). ``connections`` declares covalent
+    connection points (same as :func:`build_ligand_params_dict`).
     """
     from jtmol.ligand.atom_typing import (
         assign_tmol_atom_types,
@@ -406,11 +438,13 @@ def mol2_to_params_dict(mol2_path: str | Path, res_name: str = "LG1",
             "sanitise/align); writing zero charges -> ligand fa_elec will be "
             "zero.", mol2_path)
     return build_ligand_params_dict(mol, assignments, res_name, charges=charges,
-                                    keep_input_names=keep_input_names)
+                                    keep_input_names=keep_input_names,
+                                    connections=connections)
 
 
 def mol_to_params_dict(mol, res_name: str = "LG1",
-                       keep_input_names: bool = False) -> dict:
+                       keep_input_names: bool = False,
+                       connections: Optional[list[dict]] = None) -> dict:
     """Build the params dict from any sanitised RDKit mol with a 3D conformer.
 
     The generic path behind :func:`smiles_to_params` (and usable for SDF /
@@ -432,7 +466,8 @@ def mol_to_params_dict(mol, res_name: str = "LG1",
             "MMFF94 charges unavailable for the mol; writing zero charges -> "
             "ligand fa_elec will be zero.")
     return build_ligand_params_dict(mol, assignments, res_name, charges=charges,
-                                    keep_input_names=keep_input_names)
+                                    keep_input_names=keep_input_names,
+                                    connections=connections)
 
 
 def smiles_to_params(smiles: str, out_path: str | Path, res_name: str = "LG1",
@@ -469,17 +504,20 @@ def write_ligand_params(params: dict, out_path: str | Path) -> Path:
 
 
 def mol2_to_params(mol2_path: str | Path, out_path: str | Path,
-                   res_name: str = "LG1", keep_input_names: bool = False) -> Path:
+                   res_name: str = "LG1", keep_input_names: bool = False,
+                   connections: Optional[list[dict]] = None) -> Path:
     """MOL2 -> written ``.xtal-lig.mmff94.tmol`` (the full path).
 
     The result is directly consumable by
     :func:`jtmol.ligand.params_io.extend_db_from_yaml` and hence
     scoreable via ``build_context_from_biotite(ligand_params_files=[...])``.
     ``keep_input_names`` keeps the MOL2's own atom names (see
-    :func:`build_ligand_params_dict`).
+    :func:`build_ligand_params_dict`). ``connections`` declares covalent
+    connection points that the ``covalent_bonds=`` loader seam can wire.
     """
     return write_ligand_params(
-        mol2_to_params_dict(mol2_path, res_name, keep_input_names=keep_input_names),
+        mol2_to_params_dict(mol2_path, res_name, keep_input_names=keep_input_names,
+                            connections=connections),
         out_path)
 
 
