@@ -818,10 +818,19 @@ def lk_bridge_fraction(
         pair_mask = mi[:, None] * mj[None, :]  # [MW_i, MW_j]
         wted = -jax.nn.logsumexp(-d2.reshape(-1), b=pair_mask.reshape(-1))
 
+    # Upstream tmol #395: clamp the overlap fraction to 1 when waters
+    # strongly overlap (``wted <= 0``) instead of extrapolating the
+    # square-square ramp past its peak. This also fixes the lk_bridge /
+    # lk_bridge_uncpl gradient there -- the clamped branch is flat, so its
+    # derivative is 0, matching central finite-difference of the forward.
     overlapfrac = jnp.where(
         wted > overlap_width_A2,
         jnp.zeros_like(wted),
-        jnp.square(1.0 - jnp.square(wted / overlap_width_A2)),
+        jnp.where(
+            wted > 0.0,
+            jnp.square(1.0 - jnp.square(wted / overlap_width_A2)),
+            jnp.ones_like(wted),
+        ),
     )
 
     # ---- angle (base-length) fraction ------------------------------------

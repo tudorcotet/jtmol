@@ -119,73 +119,55 @@ def _seg_j(f, ej_sorted, jperm, N):
 
 
 # --------------------------------------------------------------------------- #
-# ljlk — analytic-force sorted backward on the union half-edges               #
+# ljlk + elec — fused analytic-force sorted backward on the union half-edges   #
 # --------------------------------------------------------------------------- #
-def _make_ljlk_sorted(bundle: S2Bundle) -> Callable:
-    lt, ls, N = bundle.lt, bundle.ls, bundle.N
-    ei, ej = ls.edge_i, ls.edge_j
-    bpl = ls.edge_bpl[None]
+def _make_ljlk_elec_sorted(bundle: S2Bundle) -> Callable:
+    """Fused LJ/LK + electrostatics on ONE shared radial pass.
+
+    ljlk and elec ride the same union half-edge list (``setup_s2`` gives ``ls``
+    and ``es`` identical ``edge_i``/``edge_j``; only their count-pair ``edge_bpl``
+    differs). Evaluating them in a single ``custom_vjp`` gathers the endpoints,
+    forms the distance, and scatters the endpoint force ONCE instead of twice --
+    the old two-builder path duplicated the gather, the jvp, and the sorted force
+    reduction behind separate opaque ``custom_vjp`` boundaries XLA cannot fuse
+    across. Parity-identical to the separate builders (same edges, same physics).
+    """
+    lt, ls, es, N = bundle.lt, bundle.ls, bundle.es, bundle.N
+    ei, ej = ls.edge_i, ls.edge_j            # shared union edges (== es.edge_i/j)
+    lj_bpl = ls.edge_bpl[None]
+    el_bpl = es.edge_bpl[None]
     scc = lt.soft_core_rep_cap
     G = _LJLKGlobals(ls)
     ip = _Side(**{f: getattr(ls, f)[:, ei] for f in _SIDE_FIELDS})
     jp = _Side(**{f: getattr(ls, f)[:, ej] for f in _SIDE_FIELDS})
-    ej_sorted, jperm = _argsort_j(ej)
-
-    def pod(dist):
-        Va, Vr = lj_atr_rep(dist, bpl, ip, jp, G, soft_core_cap=scc)
-        Vl = lk_isotropic_pair(dist, bpl, ip, jp, G)
-        return Va, Vr, Vl
-
-    @jax.custom_vjp
-    def f(c):
-        _, dist, _ = _dd(c, ei, ej)
-        Va, Vr, Vl = pod(dist)
-        return {_ATR: Va.sum(-1), _REP: Vr.sum(-1), _LK: Vl.sum(-1)}
-
-    def fwd(c):
-        diff, dist, safe = _dd(c, ei, ej)
-        (Va, Vr, Vl), (dVa, dVr, dVl) = jax.jvp(pod, (dist,), (jnp.ones_like(dist),))
-        invd = jnp.where(safe, 1.0 / jnp.where(safe, dist, 1.0), 0.0)
-        return ({_ATR: Va.sum(-1), _REP: Vr.sum(-1), _LK: Vl.sum(-1)},
-                (diff, invd, dVa, dVr, dVl))
-
-    def bwd(res, cot):
-        diff, invd, dVa, dVr, dVl = res
-        dEdd = cot[_ATR][:, None] * dVa + cot[_REP][:, None] * dVr + cot[_LK][:, None] * dVl
-        force = ((dEdd * invd)[..., None]) * diff  # [P, E, 3]
-        return (_seg_i(force, ei, N) + _seg_j(force, ej_sorted, jperm, N),)
-
-    f.defvjp(fwd, bwd)
-    return f
-
-
-# --------------------------------------------------------------------------- #
-# elec — identical analytic-force structure, single channel                   #
-# --------------------------------------------------------------------------- #
-def _make_elec_sorted(bundle: S2Bundle) -> Callable:
-    et, es, N = bundle.et, bundle.es, bundle.N
-    ei, ej = es.edge_i, es.edge_j
     e_i, e_j = es.charges[:, ei], es.charges[:, ej]
-    bpl = es.edge_bpl[None]
     ej_sorted, jperm = _argsort_j(ej)
 
     def pod(dist):
-        return elec_pair(dist, e_i, e_j, bpl, es)  # [P, E]
+        Va, Vr = lj_atr_rep(dist, lj_bpl, ip, jp, G, soft_core_cap=scc)
+        Vl = lk_isotropic_pair(dist, lj_bpl, ip, jp, G)
+        Ve = elec_pair(dist, e_i, e_j, el_bpl, es)
+        return Va, Vr, Vl, Ve
 
     @jax.custom_vjp
     def f(c):
         _, dist, _ = _dd(c, ei, ej)
-        return {_EL: pod(dist).sum(-1)}
+        Va, Vr, Vl, Ve = pod(dist)
+        return {_ATR: Va.sum(-1), _REP: Vr.sum(-1), _LK: Vl.sum(-1), _EL: Ve.sum(-1)}
 
     def fwd(c):
         diff, dist, safe = _dd(c, ei, ej)
-        Ev, dEv = jax.jvp(pod, (dist,), (jnp.ones_like(dist),))
+        (Va, Vr, Vl, Ve), (dVa, dVr, dVl, dVe) = jax.jvp(
+            pod, (dist,), (jnp.ones_like(dist),))
         invd = jnp.where(safe, 1.0 / jnp.where(safe, dist, 1.0), 0.0)
-        return {_EL: Ev.sum(-1)}, (diff, invd, dEv)
+        return ({_ATR: Va.sum(-1), _REP: Vr.sum(-1), _LK: Vl.sum(-1), _EL: Ve.sum(-1)},
+                (diff, invd, dVa, dVr, dVl, dVe))
 
     def bwd(res, cot):
-        diff, invd, dEv = res
-        force = ((cot[_EL][:, None] * dEv * invd)[..., None]) * diff
+        diff, invd, dVa, dVr, dVl, dVe = res
+        dEdd = (cot[_ATR][:, None] * dVa + cot[_REP][:, None] * dVr
+                + cot[_LK][:, None] * dVl + cot[_EL][:, None] * dVe)
+        force = ((dEdd * invd)[..., None]) * diff  # [P, E, 3]
         return (_seg_i(force, ei, N) + _seg_j(force, ej_sorted, jperm, N),)
 
     f.defvjp(fwd, bwd)
@@ -315,16 +297,14 @@ def build_fast_nonbonded(bundle: S2Bundle) -> Callable[[Any], dict]:
     edge/water gates once at build time; call the returned closure per coordinate
     set. Differentiable in ``coords_PN3``.
     """
-    ljlk = _make_ljlk_sorted(bundle)
-    elec = _make_elec_sorted(bundle)
+    ljlk_elec = _make_ljlk_elec_sorted(bundle)
     lkball = _make_lkball_bridge_split(bundle)
     hs = bundle.hs
 
     def fast(coords_PN3) -> dict:
         c = jnp.asarray(coords_PN3)
         out: dict = {}
-        out.update(ljlk(c))
-        out.update(elec(c))
+        out.update(ljlk_elec(c))
         out.update(lkball(c))
         out.update(_hbond_multipose_energy(hs, c))
         return out

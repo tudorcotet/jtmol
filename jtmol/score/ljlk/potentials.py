@@ -369,6 +369,7 @@ def _lk_one_sided_with_fade(
     lk_volume_j: jax.Array,
     cpoly_far_dmax: jax.Array,
     cpoly_far_dmin: jax.Array,
+    is_cc_pair: jax.Array,
 ) -> jax.Array:
     """One-direction LK with upstream's full close- and far-cpoly fades.
 
@@ -386,19 +387,30 @@ def _lk_one_sided_with_fade(
     * else (``dist <= cpoly_close_dmin``) -> flat plateau at
           ``f_desolv(d_min)``.
 
-    Here ``d_min = sigma * 0.89``,
-    ``cpoly_close_dmin = sqrt(max(d_min^2 - 1.45, 0.01))``, and
-    ``cpoly_close_dmax = sqrt(d_min^2 + 1.05)``.
+    Here ``d_min = sigma * 0.89`` (raised to ``max(d_min, 4.2)`` for
+    carbon-carbon pairs, ``is_cc_pair``), and the close-spline knots snap
+    to etable bins 1/20 A^2 apart: with ``n = floor(20 * d_min^2)``,
+    ``cpoly_close_dmin = sqrt(max(0, n - 29) / 20)`` and
+    ``cpoly_close_dmax = sqrt(min(n + 21, 405) / 20)`` (upstream #393).
 
     ``lj_sigma_ij`` is the pair's effective LJ sigma (with H-bond
     overrides applied) obtained from :func:`lj_sigma`; it is shared
     between the two directions so the caller computes it once.
+    ``is_cc_pair`` is the symmetric carbon-carbon flag, likewise shared.
     """
     d_min = lj_sigma_ij * 0.89
-    # ``sqrt(max(d_min^2 - 1.45, 0.01))`` -- upstream guards negative/zero
-    # with a floor of 0.01 (i.e. cpoly_close_dmin >= 0.1).
-    cpoly_close_dmin = jnp.sqrt(jnp.maximum(d_min * d_min - 1.45, 0.01))
-    cpoly_close_dmax = jnp.sqrt(d_min * d_min + 1.05)
+    # C-C desolvation flatten (upstream tmol #393): for carbon-carbon pairs
+    # Rosetta raises d_min to 4.2 A, extending the close-range plateau so
+    # aliphatic/aromatic carbons barely desolvate each other.
+    d_min = jnp.where(is_cc_pair, jnp.maximum(d_min, 4.2), d_min)
+    # Close-spline knots lie on etable bins spaced 1/20 A^2 apart
+    # (upstream tmol #393, ``lk_isotropic.hh``):
+    #   n = floor(20 * d_min^2)
+    #   cpoly_close_dmin = sqrt(max(0, n - 29) / 20)
+    #   cpoly_close_dmax = sqrt(min(n + 21, 405) / 20)
+    n_bin = jnp.floor(20.0 * d_min * d_min)
+    cpoly_close_dmin = jnp.sqrt(jnp.maximum(n_bin - 29.0, 0.0) / 20.0)
+    cpoly_close_dmax = jnp.sqrt(jnp.minimum(n_bin + 21.0, 405.0) / 20.0)
 
     # --- Far fade ------------------------------------------------------
     V_far_min, dV_far_min = _f_desolv_and_deriv(
@@ -464,11 +476,13 @@ def lk_isotropic_pair(
     direction, and multiplied by the count-pair weight.
 
     See ``tmol/score/ljlk/potentials/lk_isotropic.hh`` for the C++
-    reference. The close-range cpoly runs between
-    ``cpoly_close_dmin = sqrt(max((sigma*0.89)^2 - 1.45, 0.01))`` and
-    ``cpoly_close_dmax = sqrt((sigma*0.89)^2 + 1.05)``; below
+    reference. ``d_min = sigma * 0.89``, raised to 4.2 A for
+    carbon-carbon pairs (upstream #393). The close-range cpoly knots snap
+    to etable bins 1/20 A^2 apart (``n = floor(20 * d_min^2)``,
+    ``cpoly_close_dmin = sqrt(max(0, n-29)/20)``,
+    ``cpoly_close_dmax = sqrt(min(n+21, 405)/20)``); below
     ``cpoly_close_dmin`` the LK contribution is clamped to the plateau
-    value ``f_desolv(sigma*0.89)``. The far-range cpoly runs between
+    value ``f_desolv(d_min)``. The far-range cpoly runs between
     4.5 and 6.0 A and fades to zero.
     """
     # Shared across the two directions (sigma is symmetric in i/j).
@@ -477,6 +491,9 @@ def lk_isotropic_pair(
     cpoly_far_dmin = cpoly_far_dmax - jnp.asarray(
         _FAR_FADE_WIDTH, dtype=dist.dtype
     )
+    # Carbon-carbon pair flag (upstream #393): both atoms are LK-carbon
+    # types (CH1/CH2/CH3/Caro). Symmetric, so shared between directions.
+    is_cc_pair = i_params.is_carbon_lk & j_params.is_carbon_lk
 
     V_ij = _lk_one_sided_with_fade(
         dist,
@@ -487,6 +504,7 @@ def lk_isotropic_pair(
         j_params.lk_volume,
         cpoly_far_dmax,
         cpoly_far_dmin,
+        is_cc_pair,
     )
     V_ji = _lk_one_sided_with_fade(
         dist,
@@ -497,6 +515,7 @@ def lk_isotropic_pair(
         i_params.lk_volume,
         cpoly_far_dmax,
         cpoly_far_dmin,
+        is_cc_pair,
     )
     V = V_ij + V_ji
 

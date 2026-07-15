@@ -28,9 +28,9 @@ Setup proceeds in two phases:
    its bond graph (``RefinedResidueType.bond_indices``) to enumerate
    every intra-residue 2- / 3- / 4-atom subgraph. We then look up
    parameters in the database keyed by atom names (matching the upstream
-   behaviour, including the ``CYD`` -> ``CYS`` base-name hack). Subgraphs
-   without a parameter entry are silently dropped (mirrors the upstream
-   hash-lookup miss).
+   behaviour; CYD carries its own dedicated block per upstream #397).
+   Subgraphs without a parameter entry are silently dropped (mirrors the
+   upstream hash-lookup miss).
 
 2. **Padded flattening across block types.** Each category gets a padded
    ``[n_block_types, max_per_type, k, ...]`` int / float array. At score
@@ -255,43 +255,17 @@ def _improper_root_atom_names(cart_db: Any) -> set:
 def _base_name_for_lookup(rt: Any) -> Optional[str]:
     """Normalize a residue's base name for cartbonded DB lookup.
 
-    Upstream tmol applies a ``temp_hack_base_name`` that *loads* CYS
-    cartbonded params for CYD blocks (see ``setup_block_type``), but the
-    per-block atom unique-IDs are still keyed by ``base_name`` (= "CYD")
-    via :func:`tmol.score.atom_type_dependent_term.get_atom_unique_id_name`.
-    Result: at score time, the hash lookup is always
-    ``UNIQUE_ID:CYD:<atom>``, but the table was populated with
-    ``UNIQUE_ID:CYS:<atom>`` — every intra-residue cartbonded subgraph on
-    a CYD residue is silently a hash miss. Upstream contributes **zero**
-    intra-residue cartbonded energy for CYD blocks (lengths, angles,
-    proper torsions, impropers, and hxl torsions all drop).
-
-    Inter-residue subgraphs spanning the C-N peptide bond still work for
-    CYD because those use the ``wildcard`` DB whose keys are
-    ``WILDCARD_ID:<atom>`` (no residue prefix).
-
-    Mirrors the same upstream-quirk handling as the ``HIS_POS`` /
-    ``HIS_D`` family (see :func:`_extra_lookup_bases_for_rt`). Returning
-    ``None`` here causes the per-residue DB lookup in
-    :func:`_subgraphs_for_block_type` and
-    :func:`_build_cart_dbs_for_residue` to find no entries, so no
-    intra-residue params are loaded for the block.
-
-    Before this fix jtmol applied a CYD -> CYS rewrite that picked up
-    three intra-residue improper terms per CYD residue (the upstream
-    cart-bonded table has ``(C,N,CA,CB)``, ``(N,C,CA,CB)``, and
-    ``(N,C,CA,HA)`` impropers under CYS). On disulfide-rich proteins
-    this gave a +0.05 to +0.42 kcal/mol cart_impropers excess over the
-    upstream baseline (e.g. +0.42 on 6DMZ_A's 8 CYDs, +0.24 on 3plc's 8
-    CYDs). 1ubq / 1qys / 1r21 — which have CYS but no disulfides — were
-    bit-exact already because they never hit this code path.
+    Returns the residue base name; the cartbonded DB is keyed by it
+    directly. CYD (disulfide cysteine) has its own dedicated cartbonded
+    block in ``cartbonded.yaml``, matching upstream tmol >= 0.1.40
+    (PR #397), which added a CYD parameter set and removed the earlier
+    CYS base-name remap. Earlier upstream wheels keyed the per-block atom
+    unique-IDs by ``base_name`` (= "CYD") while the table was populated
+    under ``CYS``, so every intra-residue CYD cartbonded subgraph was a
+    silent hash miss and contributed zero; #397 fixed that by giving CYD
+    real params, and jtmol now carries the same block.
     """
-    base = getattr(rt, "base_name", None) or getattr(rt, "name3", None) or rt.name
-    if base == "CYD":
-        # See docstring: upstream silently drops all intra-residue cart
-        # bonded params for CYD; signal "no DB entry" to the callers.
-        return None
-    return base
+    return getattr(rt, "base_name", None) or getattr(rt, "name3", None) or rt.name
 
 
 def _extra_lookup_bases_for_rt(rt: Any) -> Sequence[str]:

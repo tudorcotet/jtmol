@@ -87,6 +87,7 @@ _FULL_CUTOFF = float(_LKBALL_CUTOFF)  # 6.0
 _SIDE_FIELDS = (
     "lj_radius", "lj_wdepth", "is_donor", "is_acceptor",
     "is_hydroxyl", "is_polarh", "lk_volume", "lk_dgfree", "lk_lambda",
+    "is_carbon_lk",
 )
 
 # Every lk_ball state field that _eval_full slices per pose (must be [P, ...] to
@@ -119,6 +120,7 @@ class _Side:
     lk_volume: Any
     lk_dgfree: Any
     lk_lambda: Any
+    is_carbon_lk: Any
 
 
 class _LJLKGlobals:
