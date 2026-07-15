@@ -666,11 +666,73 @@ def _fill_missing_from_icoors(
 # --------------------------------------------------------------------------- #
 
 
+def _base_name_carrying_conn_at_atom(
+    pbt: Any, name3: str, atom: str, default_base: Optional[str]
+) -> Optional[str]:
+    """Base-name of a block type (same ``name3``) that has an outgoing
+    inter-residue connection *at* ``atom`` which the default base lacks.
+
+    This is how a protein nucleophile spec (``("A", 160, "OG")``) selects the
+    connection-bearing variant (``SER_acyl`` carries ``{acyl -> OG}``; plain
+    ``SER`` does not). Data-driven: any future ``*_acyl`` / connection variant
+    with the same ``name3`` is found automatically. Returns ``None`` when no
+    such variant exists -- e.g. the residue was mutated to ALA (no ``OG``,
+    no block type with an OG connection) -> the covalent bond cannot form.
+    """
+    # Connections already present on the default (unbonded) base, so we only
+    # count a *new* connection at the atom, not e.g. backbone up/down.
+    default_atoms_with_conn: set = set()
+    for bt in getattr(pbt, "active_block_types", ()) or ():
+        if str(getattr(bt, "base_name", "")) != str(default_base):
+            continue
+        for c in getattr(bt, "connections", ()) or ():
+            default_atoms_with_conn.add(str(getattr(c, "atom", "")))
+    candidates: List[str] = []
+    for bt in getattr(pbt, "active_block_types", ()) or ():
+        if str(getattr(bt, "name3", "")) != str(name3):
+            continue
+        base = str(getattr(bt, "base_name", ""))
+        if base == str(default_base):
+            continue
+        # Only consider *base* (no-termini) rows to avoid double counting.
+        if ":" in str(getattr(bt, "name", "")):
+            continue
+        for c in getattr(bt, "connections", ()) or ():
+            if str(getattr(c, "atom", "")) == str(atom) and (
+                str(atom) not in default_atoms_with_conn
+            ):
+                if base not in candidates:
+                    candidates.append(base)
+                break
+    if len(candidates) > 1:
+        raise ValueError(
+            f"ambiguous covalent variant for {name3} atom {atom!r}: "
+            f"{candidates}; select a unique connection-bearing topology"
+        )
+    return candidates[0] if candidates else None
+
+
+def _conn_name_at_atom(bt: Any, atom: str) -> Optional[str]:
+    """Name of the connection on block type ``bt`` whose atom is ``atom``."""
+    names: List[str] = []
+    for c in getattr(bt, "connections", ()) or ():
+        if str(getattr(c, "atom", "")) == str(atom):
+            names.append(str(getattr(c, "name", "")))
+    if len(names) > 1:
+        raise ValueError(
+            f"ambiguous covalent connection at atom {atom!r} on block type "
+            f"{getattr(bt, 'name', '?')!r}: {names}"
+        )
+    return names[0] if names else None
+
+
 def pose_stack_from_canonical_form(
     canonical_form_dict: Dict[str, Any],
     packed_block_types: Any,
     chain_id: Optional[Sequence[Sequence[Any]]] = None,
     res_num: Optional[Sequence[Sequence[int]]] = None,
+    covalent_bonds: Optional[Sequence[Any]] = None,
+    covalent_state_mode: Optional[str] = None,
 ) -> Any:
     """Build a :class:`PoseStack` from a canonical-form dict.
 
@@ -685,12 +747,48 @@ def pose_stack_from_canonical_form(
     is supplied, every residue is treated as belonging to the same
     chain "A" and only the first / last overall residues are tagged as
     terminal.
+
+    Explicit ``covalent_bonds`` are accepted only with
+    ``covalent_state_mode="topology_only"``. The returned pose is marked so
+    :class:`jtmol.score.score_function.ScoreFunction` refuses energy setup;
+    this bridge currently certifies connectivity, not a parameterized state.
     """
     # Local imports so this module imports cleanly even before sibling
     # ports finish populating.
     from jtmol.pose.pose_stack_builder import PoseStackBuilder
 
     pbt = packed_block_types
+    if covalent_bonds:
+        if covalent_state_mode != "topology_only":
+            raise ValueError(
+                "direct covalent construction requires "
+                "covalent_state_mode='topology_only'; parameterized "
+                "covalent scoring is not implemented"
+            )
+        # Build the connection-bearing serine microstate only for this
+        # covalent palette.  It is intentionally absent from the default
+        # chemical database so ordinary-protein block-type indices and scores
+        # remain bit-for-bit stable.
+        from jtmol.chemical.covalent_state import with_topology_only_ser_acyl
+
+        pbt = with_topology_only_ser_acyl(pbt)
+
+        # Copy before adding the score lock: a caller-owned/default palette
+        # must remain usable for subsequent ordinary structures.  The helper
+        # above already returns a new palette when it appends SER_acyl; the
+        # shallow copy also covers ligand-only covalent palettes.
+        import copy
+
+        pbt = copy.copy(pbt)
+        pbt.covalent_state_mode = "topology_only"
+        pbt.covalent_topology_only_reason = (
+            "external covalent graph is available for topology/geometry only; "
+            "bond-order-aware and state-parameter-aware energy setup is absent"
+        )
+    elif covalent_state_mode is not None:
+        raise ValueError(
+            "covalent_state_mode requires a non-empty covalent_bonds list"
+        )
     cf = canonical_form_dict
 
     # ------------------------------------------------------------------
@@ -819,6 +917,11 @@ def pose_stack_from_canonical_form(
     # through to PoseStackBuilder so the dslf inter-residue connection
     # gets wired before bondsep is computed.
     disulfide_pairs_per_pose: List[List[Tuple[int, int]]] = []
+    # Explicit covalent bonds, resolved per pose to
+    # ``[((k_i, conn_name_i), (k_j, conn_name_j)), ...]`` in the same
+    # real-residue index space, and passed to PoseStackBuilder to wire the
+    # inter-residue connection + bondsep (identical machinery to disulfides).
+    covalent_pairs_per_pose: List[List[Any]] = []
 
     chain_input_is_per_pose = (
         chain_id is not None and len(chain_id) == n_poses
@@ -832,6 +935,58 @@ def pose_stack_from_canonical_form(
 
     def _default_resnum_row(p: int, n_real: int) -> List[int]:
         return list(range(1, n_real + 1))
+
+    # Normalise the covalent-bond specs once. Each is
+    # ((chain, resnum, atom), (chain, resnum, atom)).
+    cov_specs: List[Tuple[Tuple[Any, int, str], Tuple[Any, int, str]]] = []
+    for spec in covalent_bonds or ():
+        try:
+            (a_ch, a_rn, a_at), (b_ch, b_rn, b_at) = spec
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(
+                "each covalent_bonds entry must be a pair of "
+                "(chain, resnum, atom) specs, e.g. "
+                "(('A', 160, 'OG'), ('B', 501, 'C7')); got "
+                f"{spec!r}"
+            ) from exc
+        cov_specs.append(
+            ((a_ch, int(a_rn), str(a_at)), (b_ch, int(b_rn), str(b_at)))
+        )
+
+    def _chain_resnum_row_for_pose(p: int, real_r_inds: List[int]) -> Tuple[List[Any], List[int]]:
+        """The per-block (chain-label, resnum) used to match covalent specs.
+
+        Mirrors exactly the rows built for PDBInfo below, so a spec's
+        (chain, resnum) resolves to the same block the user sees.
+        """
+        if "chain_labels" in cf and cf["chain_labels"] is not None:
+            cl_arr = np.asarray(cf["chain_labels"], dtype=object)
+            if cl_arr.ndim == 1:
+                cl_arr = cl_arr[None, :]
+            ch_row = [str(cl_arr[p, ri]) for ri in real_r_inds]
+        elif chain_input_is_per_pose:
+            ch_row = [str(x) for x in list(chain_id[p])[: len(real_r_inds)]]
+        else:
+            ch_row = _default_chain_row(p, len(real_r_inds))
+        # Prefer author residue numbers so specs use the (chain, resnum) the
+        # user reads from the PDB. Biotite canonical forms carry these in
+        # ``res_labels``; the explicit ``res_num`` kwarg / ``cf["res_num"]``
+        # win if given.
+        if "res_num" in cf and cf["res_num"] is not None:
+            rn_arr = np.asarray(cf["res_num"])
+            if rn_arr.ndim == 1:
+                rn_arr = rn_arr[None, :]
+            rn_row = [int(rn_arr[p, ri]) for ri in real_r_inds]
+        elif resnum_input_is_per_pose:
+            rn_row = [int(x) for x in list(res_num[p])[: len(real_r_inds)]]
+        elif "res_labels" in cf and cf["res_labels"] is not None:
+            rl_arr = np.asarray(cf["res_labels"])
+            if rl_arr.ndim == 1:
+                rl_arr = rl_arr[None, :]
+            rn_row = [int(rl_arr[p, ri]) for ri in real_r_inds]
+        else:
+            rn_row = _default_resnum_row(p, len(real_r_inds))
+        return ch_row, rn_row
 
     for p in range(n_poses):
         # -- First pass: collect the 'real' residue indices (those with
@@ -890,6 +1045,69 @@ def pose_stack_from_canonical_form(
             if flag:
                 spcase_key_per_k[k] = "cyd"
 
+        # -- Explicit covalent bonds: resolve each (chain, resnum, atom) spec
+        #    side to a real-residue block ``k`` in THIS pose, and, when the
+        #    atom is a nucleophile that needs a connection-bearing variant
+        #    (Ser OG -> SER_acyl), force that variant via the spcase override
+        #    below. The (k, atom) pairs are finalised to (k, conn_name) once
+        #    block types are chosen. This is the categorical guard: if a spec
+        #    side names a residue/atom that neither carries nor can acquire a
+        #    connection (e.g. an S160A knockout: ALA, no OG), we raise here.
+        cov_sides_for_pose: List[Tuple[int, str]] = []  # flat, 2 per bond
+        if cov_specs:
+            cov_ch_row, cov_rn_row = _chain_resnum_row_for_pose(p, real_r_inds)
+
+            def _resolve_side(ch: Any, rn: int, at: str) -> int:
+                matches = [
+                    k
+                    for k in range(real_res_count)
+                    if int(cov_rn_row[k]) == int(rn)
+                    and str(cov_ch_row[k]) == str(ch)
+                ]
+                if not matches:
+                    raise ValueError(
+                        f"covalent bond spec ({ch!r}, {rn}, {at!r}) matched no "
+                        f"residue in pose {p} (chains present: "
+                        f"{sorted(set(map(str, cov_ch_row)))})."
+                    )
+                if len(matches) > 1:
+                    raise ValueError(
+                        f"covalent bond spec ({ch!r}, {rn}, {at!r}) is ambiguous "
+                        f"-- matched {len(matches)} residues in pose {p}."
+                    )
+                return matches[0]
+
+            for side_a, side_b in cov_specs:
+                for (ch, rn, at) in (side_a, side_b):
+                    k = _resolve_side(ch, rn, at)
+                    n3 = real_name3s[k]
+                    default_base = name3_spcase_lookup.get(n3, {}).get("default", n3)
+                    # Does the default block type already carry a connection
+                    # at this atom (ligand with a declared connection)?
+                    default_bt = pbt.active_block_types[
+                        name3_to_bt.get(default_base, name3_to_bt.get(n3))
+                    ]
+                    if _conn_name_at_atom(default_bt, at) is not None:
+                        cov_sides_for_pose.append((k, at))
+                        continue
+                    # Otherwise it must be a residue that acquires a
+                    # connection via a variant (protein nucleophile, e.g.
+                    # SER -> SER_acyl at OG).
+                    variant_base = _base_name_carrying_conn_at_atom(
+                        pbt, n3, at, default_base
+                    )
+                    if variant_base is None:
+                        raise ValueError(
+                            f"covalent bond spec ({ch!r}, {rn}, {at!r}) cannot "
+                            f"form: residue {n3} at ({ch}, {rn}) has no "
+                            f"connection at atom {at!r} and no {n3} variant "
+                            "declares one. A nucleophile knockout (e.g. Ser->Ala, "
+                            "no OG) lands here -- the covalent bond is "
+                            "categorically impossible."
+                        )
+                    spcase_key_per_k[k] = "other:" + variant_base
+                    cov_sides_for_pose.append((k, at))
+
         # -- Pick block-type index per real residue (variant-aware).
         bt_inds_p: List[int] = []
         for k in range(real_res_count):
@@ -910,6 +1128,27 @@ def pose_stack_from_canonical_form(
                 # Last-resort fallback: the default base for this name3.
                 chosen = name3_to_bt[n3]
             bt_inds_p.append(int(chosen))
+
+        # -- Finalise covalent bonds now that block types (and their
+        #    variant-added connections) are chosen: resolve each side's atom
+        #    to the connection *name* it carries on the selected block type.
+        cov_pairs_p: List[Any] = []
+        for b in range(0, len(cov_sides_for_pose), 2):
+            (k_i, at_i) = cov_sides_for_pose[b]
+            (k_j, at_j) = cov_sides_for_pose[b + 1]
+            bt_i = pbt.active_block_types[bt_inds_p[k_i]]
+            bt_j = pbt.active_block_types[bt_inds_p[k_j]]
+            name_i = _conn_name_at_atom(bt_i, at_i)
+            name_j = _conn_name_at_atom(bt_j, at_j)
+            if name_i is None or name_j is None:
+                # Should not happen (guarded above), but never wire a
+                # half-resolved bond.
+                raise ValueError(
+                    f"covalent bond side lost its connection after variant "
+                    f"selection: ({at_i!r} on bt {getattr(bt_i, 'name', '?')}, "
+                    f"{at_j!r} on bt {getattr(bt_j, 'name', '?')})."
+                )
+            cov_pairs_p.append(((k_i, name_i), (k_j, name_j)))
 
         # -- Pack atoms for real residues into a flat [sum(n_atoms), 3]
         #    array. Use ``variant_to_canonical`` mapping so variant
@@ -1103,6 +1342,7 @@ def pose_stack_from_canonical_form(
 
         res_name_per_pose.append(list(real_name3s))
         disulfide_pairs_per_pose.append(disulfide_pairs_p)
+        covalent_pairs_per_pose.append(cov_pairs_p)
 
     # ------------------------------------------------------------------
     # Delegate to PoseStackBuilder.from_block_types_and_coords
@@ -1115,6 +1355,8 @@ def pose_stack_from_canonical_form(
         res_num_per_pose=resnum_per_pose,
         res_name_per_pose=res_name_per_pose,
         disulfide_pairs_per_pose=disulfide_pairs_per_pose,
+        covalent_pairs_per_pose=covalent_pairs_per_pose,
+        covalent_state_mode=covalent_state_mode,
     )
 
 

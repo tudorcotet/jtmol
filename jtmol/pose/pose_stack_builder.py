@@ -91,6 +91,10 @@ class PoseStackBuilder:
         res_num_per_pose: Sequence[Sequence[int]],
         res_name_per_pose: Optional[Sequence[Sequence[str]]] = None,
         disulfide_pairs_per_pose: Optional[Sequence[Sequence[Tuple[int, int]]]] = None,
+        covalent_pairs_per_pose: Optional[
+            Sequence[Sequence[Tuple[Tuple[int, str], Tuple[int, str]]]]
+        ] = None,
+        covalent_state_mode: Optional[str] = None,
     ) -> Any:
         """Build a :class:`PoseStack` from per-pose numpy arrays.
 
@@ -123,6 +127,10 @@ class PoseStackBuilder:
             Optional; per-pose 3-letter residue names. If omitted, we
             look them up from ``pbt.active_block_types[i].name`` when
             possible, falling back to ``"UNK"``.
+        covalent_pairs_per_pose :
+            Optional named connection pairs. Non-empty input requires
+            ``covalent_state_mode="topology_only"`` and marks the returned
+            pose so ordinary score functions reject it.
 
         Returns
         -------
@@ -139,6 +147,31 @@ class PoseStackBuilder:
 
         from jtmol.pose.pose_stack import PoseStack
         from jtmol.pose.pdb_info import PDBInfo
+
+        has_covalent_pairs = covalent_pairs_per_pose is not None and any(
+            len(pairs) > 0 for pairs in covalent_pairs_per_pose
+        )
+        if has_covalent_pairs and covalent_state_mode != "topology_only":
+            raise ValueError(
+                "covalent_pairs_per_pose requires "
+                "covalent_state_mode='topology_only'"
+            )
+        if has_covalent_pairs and not getattr(
+            pbt, "covalent_topology_only_reason", None
+        ):
+            import copy
+
+            pbt = copy.copy(pbt)
+            pbt.covalent_state_mode = "topology_only"
+            pbt.covalent_topology_only_reason = (
+                "external covalent graph is available for topology/geometry "
+                "only; bond-order-aware and state-parameter-aware energy "
+                "setup is absent"
+            )
+        if not has_covalent_pairs and covalent_state_mode is not None:
+            raise ValueError(
+                "covalent_state_mode requires at least one covalent pair"
+            )
 
         n_poses = len(block_type_inds_per_pose)
         if n_poses == 0:
@@ -342,17 +375,21 @@ class PoseStackBuilder:
         # we wire each (i, j) pair so cart-bonded sees the SG-SG bond
         # and bondsep counts it as one chemical bond (not "infinity").
         # ------------------------------------------------------------------
-        def _dslf_conn_for_bt(bt_ind: int) -> int:
-            """Return the ``dslf`` connection index for a CYD-flavoured
+        def _named_conn_for_bt(bt_ind: int, conn_name: str) -> int:
+            """Return the connection slot index named ``conn_name`` on a
             block type, or -1 if the block has no such connection.
             """
             if abt_lookup is None or bt_ind < 0 or bt_ind >= len(abt_lookup):
                 return -1
             bt = abt_lookup[bt_ind]
             for k, c in enumerate(getattr(bt, "connections", ()) or ()):
-                if getattr(c, "name", None) == "dslf":
+                if getattr(c, "name", None) == conn_name:
                     return k
             return -1
+
+        def _dslf_conn_for_bt(bt_ind: int) -> int:
+            """The ``dslf`` (disulfide SG) connection slot, or -1."""
+            return _named_conn_for_bt(bt_ind, "dslf")
 
         # Capture disulfide pair wiring per pose, tagged with the
         # (dslf_i, dslf_j) connection-slot pair so bondsep wiring below
@@ -388,6 +425,73 @@ class PoseStackBuilder:
                 inter_residue_connections[p, j, dslf_j, 1] = dslf_i
                 dslf_pairs_p_out.append((i, j, dslf_i, dslf_j))
             disulfide_wired_per_pose.append(dslf_pairs_p_out)
+
+        # ------------------------------------------------------------------
+        # Arbitrary covalent inter-residue connections.
+        #
+        # Same wiring as the disulfide path above, but the two connection
+        # slots are looked up by *name* rather than the hardcoded ``dslf``,
+        # so any declared inter-residue bond works -- e.g. a catalytic
+        # Ser-OG (``acyl`` connection) to a ligand's electrophilic carbon
+        # (a ligand ``connections`` entry). The caller passes
+        # ``covalent_pairs_per_pose[p] = [((block_i, name_i),
+        # (block_j, name_j)), ...]``. This is the seam
+        # ``pose_stack_from_biotite(covalent_bonds=...)`` routes through, and
+        # it reuses the identical bondsep-=1 + Floyd-Warshall propagation the
+        # disulfide bond uses so count_pair sees path length 1 across the new
+        # bond and the 1-2/1-3/1-4 exclusions fall out for free.
+        # ------------------------------------------------------------------
+        covalent_wired_per_pose: List[List[tuple]] = []
+        for p in range(n_poses):
+            cov_pairs_p_out: List[tuple] = []
+            if covalent_pairs_per_pose is None:
+                covalent_wired_per_pose.append(cov_pairs_p_out)
+                continue
+            pairs = (
+                covalent_pairs_per_pose[p]
+                if p < len(covalent_pairs_per_pose)
+                else ()
+            )
+            nb_p = int(n_blocks_per_pose[p])
+            for (i, name_i), (j, name_j) in pairs:
+                if i < 0 or j < 0 or i >= nb_p or j >= nb_p:
+                    raise ValueError(
+                        f"covalent bond references out-of-range block "
+                        f"({i}, {j}) for pose {p} with {nb_p} blocks")
+                if i == j:
+                    raise ValueError(
+                        "covalent_bonds only describes inter-residue bonds; "
+                        f"both sides resolved to block {i} in pose {p}"
+                    )
+                bt_i = int(block_type_ind[p, i])
+                bt_j = int(block_type_ind[p, j])
+                ci = _named_conn_for_bt(bt_i, name_i)
+                cj = _named_conn_for_bt(bt_j, name_j)
+                if ci < 0 or cj < 0:
+                    # No such connection on one side -> the covalent bond
+                    # cannot form. This is the *categorical* guard: a
+                    # nucleophile knockout (Ser->Ala, no OG, no ``acyl``
+                    # connection) lands here and the loader refuses.
+                    raise ValueError(
+                        f"covalent bond wants connection {name_i!r} on block "
+                        f"{i} (bt {bt_i}) and {name_j!r} on block {j} "
+                        f"(bt {bt_j}); one is absent (ci={ci}, cj={cj}). The "
+                        "connection-bearing residue variant was not selected "
+                        "-- e.g. the nucleophile was mutated away.")
+                occupied_i = tuple(inter_residue_connections[p, i, ci])
+                occupied_j = tuple(inter_residue_connections[p, j, cj])
+                if occupied_i != (-1, -1) or occupied_j != (-1, -1):
+                    raise ValueError(
+                        "covalent bond would overwrite an existing inter-residue "
+                        f"connection in pose {p}: block {i}/{name_i} has "
+                        f"{occupied_i}, block {j}/{name_j} has {occupied_j}"
+                    )
+                inter_residue_connections[p, i, ci, 0] = j
+                inter_residue_connections[p, i, ci, 1] = cj
+                inter_residue_connections[p, j, cj, 0] = i
+                inter_residue_connections[p, j, cj, 1] = ci
+                cov_pairs_p_out.append((i, j, ci, cj))
+            covalent_wired_per_pose.append(cov_pairs_p_out)
 
         # ------------------------------------------------------------------
         # inter_block_bondsep
@@ -468,6 +572,14 @@ class PoseStackBuilder:
             for i, j, dslf_i, dslf_j in dslf_pairs_p:
                 inter_block_bondsep[p, i, j, dslf_i, dslf_j] = 1
                 inter_block_bondsep[p, j, i, dslf_j, dslf_i] = 1
+
+        # Covalent bondsep: the declared inter-residue bond is one chemical
+        # bond (same as the disulfide above). Floyd-Warshall below then
+        # propagates the 1-2/1-3/1-4 path lengths across the junction.
+        for p, cov_pairs_p in enumerate(covalent_wired_per_pose):
+            for i, j, ci, cj in cov_pairs_p:
+                inter_block_bondsep[p, i, j, ci, cj] = 1
+                inter_block_bondsep[p, j, i, cj, ci] = 1
 
         # All-pairs-shortest-path over the inter-residue connection graph
         # to propagate multi-hop bondseps. Each "node" is a (block, conn)

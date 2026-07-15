@@ -204,6 +204,11 @@ rebuild-valid ICOOR trees.
 
 Not done yet, each scoped and none silently approximated:
 
+- **Parameterized covalent states**: an explicit Ser-OG--ligand connection
+  can be loaded in `covalent_state_mode="topology_only"` for mapped-atom and
+  bond-graph validation. Scoring is locked until bond order, state-specific
+  cartbonded parameters, and complete charges are consumed. See
+  [the covalent-state boundary](docs/COVALENT_STATE_TOPOLOGY.md).
 - **CIF perception and rotatable-bond DOFs**: the MOL2 and SMILES paths
   cover the common case. Reading a coordinate-only ligand (bond
   perception from geometry) and emitting chi-topology for flexible

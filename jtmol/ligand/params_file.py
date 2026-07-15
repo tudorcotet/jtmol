@@ -20,8 +20,10 @@ This module exposes :func:`load_ligand_params_file` which structures a
 appended to the default :class:`ChemicalDatabase`. The YAML's 4-tuple
 bond format ``[a, b, order, is_ring]`` is collapsed to the 2-tuple
 ``(a, b)`` jtmol's ``RawResidueType`` already uses (order/aromaticity
-metadata is currently only consumed by the upstream cartbonded path
-and is not load-bearing for PoseStack construction).
+metadata is not load-bearing for PoseStack construction). The parser now
+also preserves those records separately on :class:`LigandParamsFile`, so
+GS and TI topology packages can be audited without pretending the current
+score terms consume bond order.
 
 Pure Python. No torch, JAX, or RDKit imports.
 """
@@ -38,6 +40,7 @@ import yaml
 from jtmol.database.chemical import (
     Atom,
     ChemicalProperties,
+    Connection,
     Icoor,
     PolymerProperties,
     ProtonationProperties,
@@ -66,6 +69,15 @@ class LigandParamsFile:
     ``atom_charges`` maps ``(res_name, atom_name) -> partial_charge`` for
     use by the ``fa_elec`` term. Kept as raw payload for now.
 
+    ``bond_orders`` preserves each YAML bond as
+    ``(atom_a, atom_b, order, is_ring)`` keyed by residue name. The current
+    scoring graph still uses only the first two fields; this metadata is for
+    state validation and must not be mistaken for active bonded parameters.
+
+    ``atom_formal_charges`` preserves explicitly declared integer
+    ``formal_charge`` atom fields. Missing declarations remain missing rather
+    than being silently invented as zero.
+
     ``cartbonded_params`` is the verbatim YAML block. Consumed by the
     ``cartbonded`` term in upstream; jtmol does not parse it yet.
     """
@@ -73,6 +85,8 @@ class LigandParamsFile:
     residues: Tuple[RawResidueType, ...]
     atom_type_names: Tuple[str, ...]
     atom_charges: Mapping[Tuple[str, str], float]
+    bond_orders: Mapping[str, Tuple[Tuple[str, str, str, bool], ...]]
+    atom_formal_charges: Mapping[Tuple[str, str], int]
     cartbonded_params: Mapping[str, Any]
     source_path: str
 
@@ -143,13 +157,35 @@ def _structure_residue(d: Mapping[str, Any]) -> RawResidueType:
         Atom(name=str(a["name"]), atom_type=str(a["atom_type"]))
         for a in d.get("atoms", ())
     )
+    atom_names = {atom.name for atom in atoms}
     bonds_raw = d.get("bonds", ())
     bonds: List[Tuple[str, str]] = []
     for b in bonds_raw:
         # Accept both 2-tuple and 4-tuple bond entries.
+        if len(b) < 2 or str(b[0]) not in atom_names or str(b[1]) not in atom_names:
+            raise ValueError(
+                f"bond {b!r} in residue {d.get('name')!r} references an "
+                f"unknown atom; known atoms are {sorted(atom_names)}"
+            )
         bonds.append((str(b[0]), str(b[1])))
 
     icoors = tuple(_structure_icoor(ic) for ic in d.get("icoors", ()))
+
+    # Inter-residue connection points (e.g. a covalent connection at the
+    # electrophilic carbon of a serine-hydrolase tetrahedral intermediate).
+    # Absent for ordinary ligands -> empty tuple, unchanged behaviour.
+    connections = tuple(
+        Connection(name=str(c["name"]), atom=str(c["atom"]))
+        for c in d.get("connections", ()) or ()
+    )
+    if len({connection.name for connection in connections}) != len(connections):
+        raise ValueError(f"duplicate connection name in residue {d.get('name')!r}")
+    for connection in connections:
+        if connection.atom not in atom_names:
+            raise ValueError(
+                f"connection {connection.name!r} in residue {d.get('name')!r} "
+                f"references unknown atom {connection.atom!r}"
+            )
 
     return RawResidueType(
         name=str(d["name"]),
@@ -159,7 +195,7 @@ def _structure_residue(d: Mapping[str, Any]) -> RawResidueType:
         atoms=atoms,
         atom_aliases=(),
         bonds=tuple(bonds),
-        connections=(),
+        connections=connections,
         torsions=(),
         icoors=icoors,
         properties=_default_chem_properties(),
@@ -185,6 +221,26 @@ def load_ligand_params_file(path: str | Path) -> LigandParamsFile:
     residue_entries = chemical_block.get("residues", []) or []
     residues = tuple(_structure_residue(d) for d in residue_entries)
 
+    bond_orders: Dict[str, Tuple[Tuple[str, str, str, bool], ...]] = {}
+    atom_formal_charges: Dict[Tuple[str, str], int] = {}
+    for entry in residue_entries:
+        res_name = str(entry["name"])
+        records: List[Tuple[str, str, str, bool]] = []
+        for bond in entry.get("bonds", ()) or ():
+            if len(bond) < 2:
+                raise ValueError(
+                    f"bond record for {res_name!r} must name two atoms, got {bond!r}"
+                )
+            order = str(bond[2]).upper() if len(bond) >= 3 else "UNSPECIFIED"
+            is_ring = bool(bond[3]) if len(bond) >= 4 else False
+            records.append((str(bond[0]), str(bond[1]), order, is_ring))
+        bond_orders[res_name] = tuple(records)
+        for atom in entry.get("atoms", ()) or ():
+            if "formal_charge" in atom:
+                atom_formal_charges[(res_name, str(atom["name"]))] = int(
+                    atom["formal_charge"]
+                )
+
     atom_type_names: List[str] = []
     seen: set = set()
     for res in residues:
@@ -205,6 +261,8 @@ def load_ligand_params_file(path: str | Path) -> LigandParamsFile:
         residues=residues,
         atom_type_names=tuple(atom_type_names),
         atom_charges=atom_charges,
+        bond_orders=bond_orders,
+        atom_formal_charges=atom_formal_charges,
         cartbonded_params=cb_block,
         source_path=str(path),
     )

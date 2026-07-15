@@ -261,9 +261,25 @@ class ScoreFunction:
         Pass ``state=None`` to have the caller auto-run setup each call
         (fine in eager mode, wasteful under jit).
         """
+        self._reject_topology_only_covalent_state(pose_stack)
         pbt = getattr(pose_stack, "packed_block_types", None)
         term_states = [t.setup_for_pose_stack(pose_stack, pbt) for t in self._terms]
         return ScoreFunctionState(term_states=term_states)
+
+    @staticmethod
+    def _reject_topology_only_covalent_state(pose_stack: Any) -> None:
+        pbt = getattr(pose_stack, "packed_block_types", None)
+        topology_only_reason = getattr(
+            pbt, "covalent_topology_only_reason", None
+        )
+        if topology_only_reason:
+            raise ValueError(
+                "cannot score a topology-only covalent state: "
+                f"{topology_only_reason}. Supply a backend that consumes "
+                "state-specific bond orders, bonded parameters, protonation, "
+                "and partial charges; do not interpret this graph as a TI "
+                "free energy."
+            )
 
     def __call__(
         self,
@@ -324,6 +340,7 @@ class ScoreFunction:
         that term internally — they just aren't returned here, because
         multiplying by zero would waste memory without affecting the sum.
         """
+        self._reject_topology_only_covalent_state(pose_stack)
         if state is None:
             state = self.setup_for_pose_stack(pose_stack)
 

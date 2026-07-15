@@ -251,6 +251,34 @@ def test_smiles_bad_input_raises(tmp_path) -> None:
         smiles_to_params("this is not a smiles", Path(tmp_path) / "x.tmol")
 
 
+def test_build_params_emits_declared_connection(tmp_path) -> None:
+    """A ligand can declare a covalent connection point at a chosen atom via
+    the RDKit residue-builder path (feeds the ``covalent_bonds`` loader seam)."""
+    pytest.importorskip("rdkit")
+    yaml = pytest.importorskip("yaml")
+    from jtmol.ligand.residue_builder import mol2_to_params_dict
+
+    if not _MOL2.exists():  # pragma: no cover
+        pytest.skip("cdk2 ligand mol2 not available")
+    d = mol2_to_params_dict(_MOL2, "LG1", connections=[{"name": "lg_c", "atom": "C7"}])
+    res = d["chemical"]["residues"][0]
+    assert res.get("connections") == [{"name": "lg_c", "atom": "C7"}]
+
+    # A connection at a non-existent atom is rejected (can't wire a phantom).
+    with pytest.raises(ValueError, match="not in ligand"):
+        mol2_to_params_dict(_MOL2, "LG1", connections=[{"name": "x", "atom": "ZZ9"}])
+
+    with pytest.raises(ValueError, match="duplicate connection name"):
+        mol2_to_params_dict(
+            _MOL2,
+            "LG1",
+            connections=[
+                {"name": "lg_c", "atom": "C7"},
+                {"name": "lg_c", "atom": "C8"},
+            ],
+        )
+
+
 if __name__ == "__main__":  # pragma: no cover - manual driver
     import inspect
     import sys
