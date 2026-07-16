@@ -47,6 +47,7 @@ def _ljlk_pose_palette_jit(
     lk_volume_table: jax.Array,
     lk_dgfree_table: jax.Array,
     lk_lambda_table: jax.Array,
+    is_carbon_lk_table: jax.Array,
     max_n_atoms_per_pose: int,
 ) -> tuple:
     """Fused LJLK palette gather — one jit trace for all 9 per-atom
@@ -90,6 +91,7 @@ def _ljlk_pose_palette_jit(
         _s_f(lk_volume_table),
         _s_f(lk_dgfree_table),
         _s_f(lk_lambda_table),
+        _s_b(is_carbon_lk_table),
         atom_is_real,
     )
 from jtmol.score.common.neighbor_list import (
@@ -120,6 +122,7 @@ class _LJLKState:
     lk_volume: jax.Array
     lk_dgfree: jax.Array
     lk_lambda: jax.Array
+    is_carbon_lk: jax.Array
 
     # Per-atom real mask: [n_poses, max_n_atoms_per_pose] bool.
     atom_is_real: jax.Array
@@ -203,6 +206,7 @@ def _annotate_packed_block_types_for_ljlk(pbt: Any, param_db: Any) -> None:
         pbt.ljlk_lk_volume_by_bt       [n_types, max_n_atoms] float32
         pbt.ljlk_lk_dgfree_by_bt       [n_types, max_n_atoms] float32
         pbt.ljlk_lk_lambda_by_bt       [n_types, max_n_atoms] float32
+        pbt.ljlk_is_carbon_lk_by_bt    [n_types, max_n_atoms] bool
 
     These are per-BT tables (not per-pose) so they are a pure function of
     the PBT palette AND the LJLK parameters, and can be cached across any
@@ -239,6 +243,7 @@ def _annotate_packed_block_types_for_ljlk(pbt: Any, param_db: Any) -> None:
     setattr(pbt, "ljlk_lk_volume_by_bt", jnp.asarray(_g_f(type_params.lk_volume)))
     setattr(pbt, "ljlk_lk_dgfree_by_bt", jnp.asarray(_g_f(type_params.lk_dgfree)))
     setattr(pbt, "ljlk_lk_lambda_by_bt", jnp.asarray(_g_f(type_params.lk_lambda)))
+    setattr(pbt, "ljlk_is_carbon_lk_by_bt", jnp.asarray(_g_b(type_params.is_carbon_lk)))
     setattr(pbt, "_ljlk_params_fp", fp)
 
 
@@ -326,6 +331,7 @@ class LJLKEnergyTerm(EnergyTerm):
             lk_volume,
             lk_dgfree,
             lk_lambda,
+            is_carbon_lk,
             atom_is_real,
         ) = _ljlk_pose_palette_jit(
             bti,
@@ -340,6 +346,7 @@ class LJLKEnergyTerm(EnergyTerm):
             pbt.ljlk_lk_volume_by_bt,
             pbt.ljlk_lk_dgfree_by_bt,
             pbt.ljlk_lk_lambda_by_bt,
+            pbt.ljlk_is_carbon_lk_by_bt,
             A,
         )
 
@@ -398,6 +405,7 @@ class LJLKEnergyTerm(EnergyTerm):
             lk_volume=lk_volume,
             lk_dgfree=lk_dgfree,
             lk_lambda=lk_lambda,
+            is_carbon_lk=is_carbon_lk,
             atom_is_real=atom_is_real,
             bonded_path_length=bonded_path_length,
             global_lj_hbond_dis=global_params.lj_hbond_dis,
@@ -459,6 +467,7 @@ class LJLKEnergyTerm(EnergyTerm):
             lk_volume: jax.Array
             lk_dgfree: jax.Array
             lk_lambda: jax.Array
+            is_carbon_lk: jax.Array
 
         s = term_state
         i_params = _Side(
@@ -471,6 +480,7 @@ class LJLKEnergyTerm(EnergyTerm):
             lk_volume=_as_i(s.lk_volume),
             lk_dgfree=_as_i(s.lk_dgfree),
             lk_lambda=_as_i(s.lk_lambda),
+            is_carbon_lk=_as_i(s.is_carbon_lk),
         )
         j_params = _Side(
             lj_radius=_as_j(s.lj_radius),
@@ -482,6 +492,7 @@ class LJLKEnergyTerm(EnergyTerm):
             lk_volume=_as_j(s.lk_volume),
             lk_dgfree=_as_j(s.lk_dgfree),
             lk_lambda=_as_j(s.lk_lambda),
+            is_carbon_lk=_as_j(s.is_carbon_lk),
         )
 
         class _G:
@@ -546,6 +557,7 @@ class LJLKEnergyTerm(EnergyTerm):
             lk_volume: jax.Array
             lk_dgfree: jax.Array
             lk_lambda: jax.Array
+            is_carbon_lk: jax.Array
 
         def _side(edge):
             return _Side(
@@ -558,6 +570,7 @@ class LJLKEnergyTerm(EnergyTerm):
                 lk_volume=s.lk_volume[:, edge],
                 lk_dgfree=s.lk_dgfree[:, edge],
                 lk_lambda=s.lk_lambda[:, edge],
+                is_carbon_lk=s.is_carbon_lk[:, edge],
             )
 
         i_params, j_params = _side(ei), _side(ej)
@@ -643,6 +656,7 @@ class LJLKEnergyTerm(EnergyTerm):
             lk_volume: jax.Array
             lk_dgfree: jax.Array
             lk_lambda: jax.Array
+            is_carbon_lk: jax.Array
 
         i_params = _Side(
             lj_radius=_as_i(s.lj_radius),
@@ -654,6 +668,7 @@ class LJLKEnergyTerm(EnergyTerm):
             lk_volume=_as_i(s.lk_volume),
             lk_dgfree=_as_i(s.lk_dgfree),
             lk_lambda=_as_i(s.lk_lambda),
+            is_carbon_lk=_as_i(s.is_carbon_lk),
         )
         j_params = _Side(
             lj_radius=_as_j(s.lj_radius),
@@ -665,6 +680,7 @@ class LJLKEnergyTerm(EnergyTerm):
             lk_volume=_as_j(s.lk_volume),
             lk_dgfree=_as_j(s.lk_dgfree),
             lk_lambda=_as_j(s.lk_lambda),
+            is_carbon_lk=_as_j(s.is_carbon_lk),
         )
 
         class _G:

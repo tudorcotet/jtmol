@@ -26,7 +26,7 @@ from jtmol.score.score_types import ScoreType
 # _LJLKState field names (must reconstruct with Verlet edges swapped in).
 _STATE_FIELDS = (
     "lj_radius", "lj_wdepth", "is_donor", "is_acceptor", "is_hydroxyl", "is_polarh",
-    "lk_volume", "lk_dgfree", "lk_lambda", "atom_is_real", "bonded_path_length",
+    "lk_volume", "lk_dgfree", "lk_lambda", "is_carbon_lk", "atom_is_real", "bonded_path_length",
     "global_lj_hbond_dis", "global_lj_hbond_OH_donor_dis", "global_lj_hbond_hdis",
     "global_max_dis", "global_lj_dlin_sigma_factor",
     "neighbor_idx", "neighbor_mask", "bpl_neighbor", "edge_i", "edge_j", "edge_bpl",

@@ -122,6 +122,7 @@ def _make_lj_type_params(lj_radius=1.9, lj_wdepth=0.1,
         lk_volume=jnp.asarray(lk_volume, dtype=jnp.float32),
         lk_dgfree=jnp.asarray(lk_dgfree, dtype=jnp.float32),
         lk_lambda=jnp.asarray(lk_lambda, dtype=jnp.float32),
+        is_carbon_lk=jnp.asarray(False),
     )
 
 
