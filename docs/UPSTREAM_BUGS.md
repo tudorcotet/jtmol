@@ -161,7 +161,8 @@ for the worked example.
 
 ## 4. `CartBondedEnergyTerm` looks up `CYS` params for `CYD` residues but emits the wrong hash key
 
-Present on upstream master (unchanged by `f4d0916`). The Python-side
+Present on upstream through 0.1.39; **fixed in tmol 0.1.40 (PR #397)**.
+On the affected wheels the Python-side
 `temp_hack_base_name = "CYS" if … "CYD"` remap is in place, but the
 compiled-side hash key uses `CYD:<atom>`, so CYD intramolecular
 impropers silently zero.
@@ -178,11 +179,12 @@ returns +2.1039 kcal/mol; the YAML golden generator produces the same
 number. The CYS-derived params for the CYD intramolecular improper
 chains contribute 0 in upstream because the hash key never resolves.
 
-**jtmol workaround.** Replicate the hash-miss deliberately: drop the
-CYD intra-residue params so jtmol returns +2.1039 (matching upstream)
-rather than the +2.5253 that CYS-params-applied-to-CYD would give. This
-is one of the few places jtmol replicates an upstream bug for parity
-rather than fixing it. The upstream source flags it as a `# TODO!`.
+**jtmol.** Upstream #397 (tmol 0.1.40) added a dedicated CYD cartbonded
+block and dropped the CYS-remap hack. jtmol carries the same CYD block
+(`cartbonded.yaml`), so `_base_name_for_lookup` resolves CYD to its own
+params and `cart_impropers` matches upstream 0.1.40. jtmol previously
+replicated the hash-miss (returning +2.1039) to match the pre-0.1.40
+wheels; that replication has been removed.
 
 ## 5. Compiled cubic-Hermite kink adjoints use float32 internally even with float64 input
 

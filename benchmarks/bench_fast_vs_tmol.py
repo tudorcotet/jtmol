@@ -60,7 +60,8 @@ def main() -> None:
     ap.add_argument("--pdb-dir", type=str, default=None, help="directory of distinct PDBs for S3")
     ap.add_argument("--k", type=int, default=128)
     ap.add_argument("--reps", type=int, default=40)
-    ap.add_argument("--n-s3", type=int, default=32, help="how many distinct structures for S3")
+    ap.add_argument("--n-s3", type=int, default=64,
+                    help="how many distinct structures for S3 (K=128 is memory-bound)")
     args = ap.parse_args()
 
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9")
@@ -112,8 +113,18 @@ def main() -> None:
         jax.block_until_ready(jt_v(coords))
         tps = TPSB.from_poses([tload(UBQ, dev) for _ in range(K)], dev)
         sc = beta2016_score_function(dev).render_whole_pose_scoring_module(tps)
-        cg = tps.coords.detach().clone().requires_grad_(True)
-        fjt, ftm = _abba(lambda: jt_f(coords), lambda: sc(tps.coords).sum().detach(), K, args.reps, jax, torch)
+        # Fairness: both backends must score K DISTINCT conformations, not K
+        # identical native copies. Perturb tmol's own native coords by the same
+        # magnitude jtmol uses (independent draw; atom orders differ between
+        # backends, so we match the workload distribution, not the exact bytes).
+        if K == 1:
+            tco = tps.coords.detach().clone()
+        else:
+            base_t = tps.coords[0]
+            pert = rng.normal(scale=0.1, size=(K,) + tuple(base_t.shape)).astype(np.float32)
+            tco = base_t[None] + torch.as_tensor(pert, device=dev)
+        cg = tco.detach().clone().requires_grad_(True)
+        fjt, ftm = _abba(lambda: jt_f(coords), lambda: sc(tco).sum().detach(), K, args.reps, jax, torch)
         vjt, vtm = _abba(lambda: jt_v(coords), lambda: torch.autograd.grad(sc(cg).sum(), cg), K, args.reps, jax, torch)
         rows.append((tag, ftm / fjt, vtm / vjt))
 
@@ -152,11 +163,13 @@ def main() -> None:
             d = fast3(flat_c); nb = sum(jnp.sum(d[getattr(JST, n)]) * WEIGHTS[n] for n in NB9)
             return nb + jnp.sum(npair3(native, state=st3, coords_override=padded_c).astype(jnp.float32))
         jt_v3 = jax.jit(jax.value_and_grad(full3)); jax.block_until_ready(jt_v3(pc))
+        jt_f3 = jax.jit(full3); jax.block_until_ready(jt_f3(pc))
         tps3 = TPSB.from_poses(tm_ps, dev)
         sc3 = beta2016_score_function(dev).render_whole_pose_scoring_module(tps3)
         cg3 = tps3.coords.detach().clone().requires_grad_(True)
+        fjt3, ftm3 = _abba(lambda: jt_f3(pc), lambda: sc3(tps3.coords).sum().detach(), K, args.reps, jax, torch)
         vjt, vtm = _abba(lambda: jt_v3(pc), lambda: torch.autograd.grad(sc3(cg3).sum(), cg3), K, args.reps, jax, torch)
-        rows.append((f"S3 (K={K} distinct)", float("nan"), vtm / vjt))
+        rows.append((f"S3 (K={K} distinct)", ftm3 / fjt3, vtm / vjt))
     else:
         print("(skipping S3 -- pass --pdb-dir with distinct PDBs to run it)")
 

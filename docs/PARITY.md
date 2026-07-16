@@ -76,8 +76,8 @@ A few notes on the entries that aren't pure autodiff:
 All five categories of expected mismatch with the live upstream wheel
 are catalogued in [`UPSTREAM_BUGS.md`](UPSTREAM_BUGS.md), including
 the `cart_lengths` / `cart_angles` kernel zeros (entry 2), the
-`set_weight(_, 0)` AttributeError (entry 3), the CYD param hash-miss
-that jtmol deliberately replicates (entry 4), and the cubic-Hermite kink
+`set_weight(_, 0)` AttributeError (entry 3), the CYD cartbonded params
+jtmol now carries from upstream #397 (entry 4), and the cubic-Hermite kink
 float32-internal-adjoint floor that explains the ~1e-4 grad residual
 on `omega` / `cart_torsions` / `cart_impropers` / `cart_hxltorsions` /
 `dunbrack_rotdev` (entry 5).
