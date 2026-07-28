@@ -12,7 +12,7 @@ on 1ubq.
 |---|---:|---:|---:|---:|
 | fa_ljatr | -417.0235 | -417.0236 | 0.0001 | 0.000% |
 | fa_ljrep |  240.7137 |  240.7147 | 0.0010 | 0.000% |
-| fa_lk    |  298.2766 |  298.2765 | 0.0000 | 0.000% |
+| fa_lk    |  301.9335 |  301.9335 | 0.0000 | 0.000% |
 | fa_elec  | -134.0211 | -134.0211 | 0.0000 | 0.000% |
 | hbond    |  -55.6756 |  -55.6756 | 0.0000 | 0.000% |
 | rama     |  -12.7434 |  -12.7434 | 0.0000 | 0.000% |
@@ -25,10 +25,10 @@ on 1ubq.
 | cart_torsions    |   46.0236 |   46.0236 | 0.0000 | 0.000% |
 | cart_impropers   |    9.4305 |    9.4305 | 0.0000 | 0.000% |
 | cart_hxltorsions |   47.4197 |   47.4197 | 0.0000 | 0.000% |
-| lk_ball_iso |  422.0394 |  422.0396 | 0.0001 | 0.000% |
-| lk_ball     |  172.1964 |  172.1964 | 0.0000 | 0.000% |
-| lk_bridge   |    1.5786 |    1.5786 | 0.0000 | 0.000% |
-| lk_bridge_uncpl | 10.9946 |  10.9946 | 0.0000 | 0.000% |
+| lk_ball_iso |  422.0548 |  422.0548 | 0.0000 | 0.000% |
+| lk_ball     |  172.2102 |  172.2102 | 0.0000 | 0.000% |
+| lk_bridge   |    1.5817 |    1.5817 | 0.0000 | 0.000% |
+| lk_bridge_uncpl | 11.0316 |  11.0316 | 0.0000 | 0.000% |
 | ref         |  -41.2750 |  -41.2750 | 0.0000 | 0.000% |
 
 Every channel forward-matches upstream at float32-level agreement
@@ -76,8 +76,8 @@ A few notes on the entries that aren't pure autodiff:
 All five categories of expected mismatch with the live upstream wheel
 are catalogued in [`UPSTREAM_BUGS.md`](UPSTREAM_BUGS.md), including
 the `cart_lengths` / `cart_angles` kernel zeros (entry 2), the
-`set_weight(_, 0)` AttributeError (entry 3), the CYD param hash-miss
-that jtmol deliberately replicates (entry 4), and the cubic-Hermite kink
+`set_weight(_, 0)` AttributeError (entry 3), the CYD cartbonded params
+jtmol carries from upstream #397 (entry 4), and the cubic-Hermite kink
 float32-internal-adjoint floor that explains the ~1e-4 grad residual
 on `omega` / `cart_torsions` / `cart_impropers` / `cart_hxltorsions` /
 `dunbrack_rotdev` (entry 5).

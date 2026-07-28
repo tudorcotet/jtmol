@@ -124,6 +124,7 @@ def _lkball_pose_palette_jit(
     B0_local_table: jax.Array,
     acc_hyb_table: jax.Array,
     H_local_table: jax.Array,
+    is_carbon_lk_table: jax.Array,
     max_n_atoms_per_pose: int,
 ) -> Tuple[jax.Array, ...]:
     """Fused LK-ball palette gather — one jit trace replaces ~10 separate
@@ -165,6 +166,7 @@ def _lkball_pose_palette_jit(
     is_hxl = _s_b(is_hxl_table)
     is_ph = _s_b(is_ph_table)
     is_hydrogen = _s_b(is_hydrogen_table)
+    is_carbon_lk = _s_b(is_carbon_lk_table)
 
     heavy = jnp.logical_not(is_hydrogen)
     is_polar = jnp.logical_and(heavy, jnp.logical_or(is_donor, is_acc))
@@ -208,6 +210,7 @@ def _lkball_pose_palette_jit(
         att_H_idx.astype(jnp.int32),
         H_valid,
         n_H_out,
+        is_carbon_lk,
     )
 
 
@@ -241,6 +244,11 @@ class LKBallTermState:
     is_acceptor: jax.Array
     is_hydroxyl: jax.Array
     is_polarh: jax.Array
+    # LK-carbon flag (CH1/CH2/CH3/Caro; Rosetta
+    # ``Etable::initialize_carbontypes_to_linearize_fasol``, upstream tmol
+    # >= 0.1.40 PR #393). Carbon-carbon pairs raise the LK ``d_min`` to
+    # 4.2 A. Stored float32 like the other is_* flags.
+    is_carbon_lk: jax.Array
 
     # Polar-atom mask, [n_poses, max_n_atoms_per_pose].
     is_polar: jax.Array
@@ -439,6 +447,7 @@ class LKBallEnergyTerm(EnergyTerm):
                 att_H_idx_3d,
                 att_H_mask_3d,
                 n_att_H_2d,
+                is_carbon_lk_2d,
             ) = self._per_atom_full_palette(
                 pose_stack, pbt, self.max_n_neighbors, self.max_H_per_donor
             )
@@ -462,6 +471,7 @@ class LKBallEnergyTerm(EnergyTerm):
             is_polar_2d = zero_b
             is_occluder_2d = zero_b
             is_real_2d = zero_b
+            is_carbon_lk_2d = zero_b
             B_idx_2d = jnp.full(shape, -1, dtype=jnp.int32)
             B0_idx_2d = jnp.full(shape, -1, dtype=jnp.int32)
             acc_hyb_2d = zero_i
@@ -512,6 +522,7 @@ class LKBallEnergyTerm(EnergyTerm):
             is_acceptor=is_acc_2d.astype(jnp.float32),
             is_hydroxyl=is_hxl_2d.astype(jnp.float32),
             is_polarh=is_ph_2d.astype(jnp.float32),
+            is_carbon_lk=is_carbon_lk_2d.astype(jnp.float32),
             is_polar=is_polar_2d,
             is_occluder=is_occluder_2d,
             is_real=is_real_2d,
@@ -642,6 +653,7 @@ class LKBallEnergyTerm(EnergyTerm):
             "is_acceptor": state.is_acceptor,
             "is_hydroxyl": state.is_hydroxyl,
             "is_polarh": state.is_polarh,
+            "is_carbon_lk": state.is_carbon_lk,
             "is_polar": state.is_polar,
             "is_occluder": state.is_occluder,
             "is_real": state.is_real,
@@ -775,6 +787,8 @@ class LKBallEnergyTerm(EnergyTerm):
                 "j_is_polarh": state["is_polarh"][j],
                 "i_is_acceptor": state["is_acceptor"][i],
                 "j_is_acceptor": state["is_acceptor"][j],
+                "i_is_carbon_lk": state["is_carbon_lk"][i],
+                "j_is_carbon_lk": state["is_carbon_lk"][j],
             }
             bpl = bpl_neighbor[i, k]
             res = lk_ball_pair(
@@ -839,6 +853,7 @@ class LKBallEnergyTerm(EnergyTerm):
             "i_is_hydroxyl": gi("is_hydroxyl"), "j_is_hydroxyl": gj("is_hydroxyl"),
             "i_is_polarh": gi("is_polarh"), "j_is_polarh": gj("is_polarh"),
             "i_is_acceptor": gi("is_acceptor"), "j_is_acceptor": gj("is_acceptor"),
+            "i_is_carbon_lk": gi("is_carbon_lk"), "j_is_carbon_lk": gj("is_carbon_lk"),
         }
 
         def pair_at(coord_i, waters_i, coord_j, waters_j, prm, bpl):
@@ -888,6 +903,8 @@ class LKBallEnergyTerm(EnergyTerm):
                 "j_is_polarh": state["is_polarh"][j],
                 "i_is_acceptor": state["is_acceptor"][i],
                 "j_is_acceptor": state["is_acceptor"][j],
+                "i_is_carbon_lk": state["is_carbon_lk"][i],
+                "j_is_carbon_lk": state["is_carbon_lk"][j],
             }
             bpl = state["bonded_path_length"][i, j]
             res = lk_ball_pair(
@@ -981,10 +998,11 @@ class LKBallEnergyTerm(EnergyTerm):
 
         Produces four bool ``[n_types, max_n_atoms]`` arrays
         (donor / acceptor / hydroxyl / polarh) plus ``is_hydrogen`` for
-        the heavy-atom gate. Everything depends only on the palette +
+        the heavy-atom gate and ``is_carbon_lk`` (upstream #393) for the
+        C-C desolvation flatten. Everything depends only on the palette +
         chemical DB, not on pose layout.
         """
-        if hasattr(pbt, "lkball_bt_is_donor"):
+        if hasattr(pbt, "lkball_bt_is_carbon_lk"):
             return
         chem_db = pbt.chem_db
         chem_is_donor = np.asarray(
@@ -999,6 +1017,13 @@ class LKBallEnergyTerm(EnergyTerm):
         chem_is_ph = np.asarray(
             [at.is_polarh for at in chem_db.atom_types], dtype=bool
         )
+        # Rosetta's ``Etable::initialize_carbontypes_to_linearize_fasol``
+        # (upstream tmol >= 0.1.40, PR #393): carbon types whose C-C pairs
+        # get the flattened LK desolvation ramp.
+        chem_is_carbon_lk = np.asarray(
+            [at.name in ("CH1", "CH2", "CH3", "Caro") for at in chem_db.atom_types],
+            dtype=bool,
+        )
 
         atom_types_np = np.asarray(pbt.atom_types)
         safe_types = np.clip(atom_types_np, 0, None)
@@ -1012,6 +1037,7 @@ class LKBallEnergyTerm(EnergyTerm):
         setattr(pbt, "lkball_bt_is_acc", jnp.asarray(_g(chem_is_acc)))
         setattr(pbt, "lkball_bt_is_hxl", jnp.asarray(_g(chem_is_hxl)))
         setattr(pbt, "lkball_bt_is_ph", jnp.asarray(_g(chem_is_ph)))
+        setattr(pbt, "lkball_bt_is_carbon_lk", jnp.asarray(_g(chem_is_carbon_lk)))
         is_hydrogen_per_block = np.asarray(pbt.atom_is_hydrogen, dtype=bool)
         setattr(
             pbt,
@@ -1254,6 +1280,7 @@ class LKBallEnergyTerm(EnergyTerm):
             getattr(pbt, f"lkball_bt_B0_local_k{max_H_per_donor}"),
             getattr(pbt, f"lkball_bt_acc_hyb_k{max_H_per_donor}"),
             getattr(pbt, f"lkball_bt_H_local_k{max_H_per_donor}"),
+            pbt.lkball_bt_is_carbon_lk,
             A,
         )
 

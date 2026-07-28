@@ -68,6 +68,11 @@ class LJTypeParams:
         LK desolvation free energy (kcal/mol).
     lk_lambda
         LK Gaussian width parameter.
+    is_carbon_lk
+        True for the carbon atom types Rosetta flattens LK desolvation
+        for in carbon-carbon pairs (``CH1``, ``CH2``, ``CH3``, ``Caro``).
+        Upstream tmol >= 0.1.40 (PR #393) raises ``d_min`` to 4.2 A for
+        C-C pairs; see :func:`jtmol.score.ljlk.potentials.lk_isotropic_pair`.
     """
 
     lj_radius: jax.Array
@@ -79,6 +84,7 @@ class LJTypeParams:
     lk_volume: jax.Array
     lk_dgfree: jax.Array
     lk_lambda: jax.Array
+    is_carbon_lk: jax.Array
 
     # ------------------------------------------------------------------ #
     # Constructors                                                       #
@@ -112,12 +118,17 @@ class LJTypeParams:
         is_acceptor = np.zeros(n, dtype=np.bool_)
         is_hydroxyl = np.zeros(n, dtype=np.bool_)
         is_polarh = np.zeros(n, dtype=np.bool_)
+        # Rosetta flattens LK desolvation for these carbon types in C-C
+        # pairs (upstream tmol #393): atom_type in {CH1, CH2, CH3, Caro}.
+        _CARBON_LK = {"CH1", "CH2", "CH3", "Caro"}
+        is_carbon_lk = np.zeros(n, dtype=np.bool_)
 
         for i, at in enumerate(chem_db.atom_types):
             is_donor[i] = bool(at.is_donor)
             is_acceptor[i] = bool(at.is_acceptor)
             is_hydroxyl[i] = bool(at.is_hydroxyl)
             is_polarh[i] = bool(at.is_polarh)
+            is_carbon_lk[i] = at.name in _CARBON_LK
             lj = lj_by_name.get(at.name)
             if lj is not None:
                 lj_radius[i] = lj.lj_radius
@@ -136,6 +147,7 @@ class LJTypeParams:
             lk_volume=jnp.asarray(lk_volume),
             lk_dgfree=jnp.asarray(lk_dgfree),
             lk_lambda=jnp.asarray(lk_lambda),
+            is_carbon_lk=jnp.asarray(is_carbon_lk),
         )
 
     # ------------------------------------------------------------------ #
@@ -160,6 +172,7 @@ class LJTypeParams:
             lk_volume=self.lk_volume[safe],
             lk_dgfree=self.lk_dgfree[safe],
             lk_lambda=self.lk_lambda[safe],
+            is_carbon_lk=self.is_carbon_lk[safe],
         )
 
 
