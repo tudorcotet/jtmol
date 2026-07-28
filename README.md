@@ -73,7 +73,13 @@ jtmol is faster**. A100-80GB, float32, warm ABBA-interleaved timing:
 |---|---|---:|---:|
 | **S1** | one structure, K=1 (single-pose latency) | 2.6× | 1.7× |
 | **S2** | one topology, K=128 conformations (ensemble / relax) | 2.1× | 1.1× |
-| **S3** | 128 distinct structures (heterogeneous batch) | ~0.7× | 1.1× |
+| **S3** | 128 distinct structures (heterogeneous batch) | ~0.7×* | 1.1× |
+
+\* The S3 forward number is stale: it predates the fused-radial fast path
+(commit `05c3c33`, which fused LJ/LK/elec onto one sorted-scatter pass and
+cut the dominant S3 cost by ~96%). The number needs to be re-measured on a
+CUDA runner with `python benchmarks/bench_fast_vs_tmol.py --pdb-dir
+/path/to/128/distinct/pdbs`. Value+grad is current as of that commit.
 
 Notes, in the interest of accuracy: jtmol scores on a neighbor list built
 once per batch (amortized across conformations), so these ratios reflect

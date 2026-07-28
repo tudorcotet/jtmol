@@ -5,13 +5,13 @@
   "created_date": "2026-07-12",
   "upstream_tmol": {
     "repository": "https://github.com/uw-ipd/tmol",
-    "version": "0.1.36",
-    "release_tag": "v0.1.36",
-    "git_commit": "ea3d46295ab142c9f6f57a171638d420af41e034",
+    "version": "0.1.40",
+    "release_tag": "v0.1.40",
+    "git_commit": "d1be9d62434b5e6d30d92e39e5c8259571bd25f8",
     "wheel": {
-      "filename": "tmol-0.1.36+cu128torch2.10-cp312-cp312-linux_x86_64.whl",
-      "url": "https://github.com/uw-ipd/tmol/releases/download/v0.1.36/tmol-0.1.36+cu128torch2.10-cp312-cp312-linux_x86_64.whl",
-      "sha256": "2093723b74eb4fff4a7ccf2ccb2f08f3bcee5171fc092044a38871ccecbd89dc",
+      "filename": "tmol-0.1.40+cu128torch2.10-cp312-cp312-linux_x86_64.whl",
+      "url": "https://github.com/uw-ipd/tmol/releases/download/v0.1.40/tmol-0.1.40+cu128torch2.10-cp312-cp312-linux_x86_64.whl",
+      "sha256": "47c03cfaba48deb861994fadab62d857a5dc24365722cafff84e87c14442f18e",
       "python": "3.12",
       "torch": "2.10.*",
       "cuda": "12.8"

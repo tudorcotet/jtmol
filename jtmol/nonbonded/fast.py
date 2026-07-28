@@ -119,73 +119,55 @@ def _seg_j(f, ej_sorted, jperm, N):
 
 
 # --------------------------------------------------------------------------- #
-# ljlk — analytic-force sorted backward on the union half-edges               #
+# ljlk + elec — fused analytic-force sorted backward on the union half-edges   #
 # --------------------------------------------------------------------------- #
-def _make_ljlk_sorted(bundle: S2Bundle) -> Callable:
-    lt, ls, N = bundle.lt, bundle.ls, bundle.N
-    ei, ej = ls.edge_i, ls.edge_j
-    bpl = ls.edge_bpl[None]
+def _make_ljlk_elec_sorted(bundle: S2Bundle) -> Callable:
+    """Fused LJ/LK + electrostatics on ONE shared radial pass.
+
+    ljlk and elec ride the same union half-edge list (``setup_s2`` gives ``ls``
+    and ``es`` identical ``edge_i``/``edge_j``; only their count-pair ``edge_bpl``
+    differs). Evaluating both in a single ``custom_vjp`` gathers the endpoints,
+    forms the distance, and scatters the endpoint force ONCE. A per-term
+    ``custom_vjp`` is opaque to XLA, so splitting ljlk and elec into two would
+    duplicate the gather, the jvp, and the sorted force reduction with no fusion
+    between them.
+    """
+    lt, ls, es, N = bundle.lt, bundle.ls, bundle.es, bundle.N
+    ei, ej = ls.edge_i, ls.edge_j            # shared union edges (== es.edge_i/j)
+    lj_bpl = ls.edge_bpl[None]
+    el_bpl = es.edge_bpl[None]
     scc = lt.soft_core_rep_cap
     G = _LJLKGlobals(ls)
     ip = _Side(**{f: getattr(ls, f)[:, ei] for f in _SIDE_FIELDS})
     jp = _Side(**{f: getattr(ls, f)[:, ej] for f in _SIDE_FIELDS})
-    ej_sorted, jperm = _argsort_j(ej)
-
-    def pod(dist):
-        Va, Vr = lj_atr_rep(dist, bpl, ip, jp, G, soft_core_cap=scc)
-        Vl = lk_isotropic_pair(dist, bpl, ip, jp, G)
-        return Va, Vr, Vl
-
-    @jax.custom_vjp
-    def f(c):
-        _, dist, _ = _dd(c, ei, ej)
-        Va, Vr, Vl = pod(dist)
-        return {_ATR: Va.sum(-1), _REP: Vr.sum(-1), _LK: Vl.sum(-1)}
-
-    def fwd(c):
-        diff, dist, safe = _dd(c, ei, ej)
-        (Va, Vr, Vl), (dVa, dVr, dVl) = jax.jvp(pod, (dist,), (jnp.ones_like(dist),))
-        invd = jnp.where(safe, 1.0 / jnp.where(safe, dist, 1.0), 0.0)
-        return ({_ATR: Va.sum(-1), _REP: Vr.sum(-1), _LK: Vl.sum(-1)},
-                (diff, invd, dVa, dVr, dVl))
-
-    def bwd(res, cot):
-        diff, invd, dVa, dVr, dVl = res
-        dEdd = cot[_ATR][:, None] * dVa + cot[_REP][:, None] * dVr + cot[_LK][:, None] * dVl
-        force = ((dEdd * invd)[..., None]) * diff  # [P, E, 3]
-        return (_seg_i(force, ei, N) + _seg_j(force, ej_sorted, jperm, N),)
-
-    f.defvjp(fwd, bwd)
-    return f
-
-
-# --------------------------------------------------------------------------- #
-# elec — identical analytic-force structure, single channel                   #
-# --------------------------------------------------------------------------- #
-def _make_elec_sorted(bundle: S2Bundle) -> Callable:
-    et, es, N = bundle.et, bundle.es, bundle.N
-    ei, ej = es.edge_i, es.edge_j
     e_i, e_j = es.charges[:, ei], es.charges[:, ej]
-    bpl = es.edge_bpl[None]
     ej_sorted, jperm = _argsort_j(ej)
 
     def pod(dist):
-        return elec_pair(dist, e_i, e_j, bpl, es)  # [P, E]
+        Va, Vr = lj_atr_rep(dist, lj_bpl, ip, jp, G, soft_core_cap=scc)
+        Vl = lk_isotropic_pair(dist, lj_bpl, ip, jp, G)
+        Ve = elec_pair(dist, e_i, e_j, el_bpl, es)
+        return Va, Vr, Vl, Ve
 
     @jax.custom_vjp
     def f(c):
         _, dist, _ = _dd(c, ei, ej)
-        return {_EL: pod(dist).sum(-1)}
+        Va, Vr, Vl, Ve = pod(dist)
+        return {_ATR: Va.sum(-1), _REP: Vr.sum(-1), _LK: Vl.sum(-1), _EL: Ve.sum(-1)}
 
     def fwd(c):
         diff, dist, safe = _dd(c, ei, ej)
-        Ev, dEv = jax.jvp(pod, (dist,), (jnp.ones_like(dist),))
+        (Va, Vr, Vl, Ve), (dVa, dVr, dVl, dVe) = jax.jvp(
+            pod, (dist,), (jnp.ones_like(dist),))
         invd = jnp.where(safe, 1.0 / jnp.where(safe, dist, 1.0), 0.0)
-        return {_EL: Ev.sum(-1)}, (diff, invd, dEv)
+        return ({_ATR: Va.sum(-1), _REP: Vr.sum(-1), _LK: Vl.sum(-1), _EL: Ve.sum(-1)},
+                (diff, invd, dVa, dVr, dVl, dVe))
 
     def bwd(res, cot):
-        diff, invd, dEv = res
-        force = ((cot[_EL][:, None] * dEv * invd)[..., None]) * diff
+        diff, invd, dVa, dVr, dVl, dVe = res
+        dEdd = (cot[_ATR][:, None] * dVa + cot[_REP][:, None] * dVr
+                + cot[_LK][:, None] * dVl + cot[_EL][:, None] * dVe)
+        force = ((dEdd * invd)[..., None]) * diff  # [P, E, 3]
         return (_seg_i(force, ei, N) + _seg_j(force, ej_sorted, jperm, N),)
 
     f.defvjp(fwd, bwd)
@@ -224,7 +206,7 @@ def _make_lkball_bridge_split(bundle: S2Bundle) -> Callable:
 
     _PP = (
         "lj_radius", "lk_dgfree", "lk_lambda", "lk_volume", "is_donor", "is_acceptor",
-        "is_hydroxyl", "is_polarh", "is_polar", "is_occluder", "is_real",
+        "is_hydroxyl", "is_polarh", "is_carbon_lk", "is_polar", "is_occluder", "is_real",
         "B_idx", "B0_idx", "acc_hybridization", "attached_H_idx", "attached_H_mask",
         "n_attached_H",
     )
@@ -266,6 +248,7 @@ def _make_lkball_bridge_split(bundle: S2Bundle) -> Callable:
             "i_is_hydroxyl": g("is_hydroxyl", I), "j_is_hydroxyl": g("is_hydroxyl", J),
             "i_is_polarh": g("is_polarh", I), "j_is_polarh": g("is_polarh", J),
             "i_is_acceptor": g("is_acceptor", I), "j_is_acceptor": g("is_acceptor", J),
+            "i_is_carbon_lk": g("is_carbon_lk", I), "j_is_carbon_lk": g("is_carbon_lk", J),
         }
 
     def pair_no_bridge(ci, wi, cj, wj, prm, b):
@@ -278,6 +261,8 @@ def _make_lkball_bridge_split(bundle: S2Bundle) -> Callable:
         lk_iso = lk_isotropic_pair_simplified(
             dist, sigma, prm["i_lj_radius"], prm["i_lk_dgfree"],
             prm["i_lk_lambda"], prm["j_lk_volume"], b,
+            is_cc_pair=(jnp.asarray(prm["i_is_carbon_lk"]) > 0.5)
+            & (jnp.asarray(prm["j_is_carbon_lk"]) > 0.5),
         )
         frac = lk_fraction(swi, cj, prm["j_lj_radius"], _DEF.ramp_width_A2, wi_mask)
         g = jnp.logical_and(has_w, within).astype(lk_iso.dtype)
@@ -315,16 +300,14 @@ def build_fast_nonbonded(bundle: S2Bundle) -> Callable[[Any], dict]:
     edge/water gates once at build time; call the returned closure per coordinate
     set. Differentiable in ``coords_PN3``.
     """
-    ljlk = _make_ljlk_sorted(bundle)
-    elec = _make_elec_sorted(bundle)
+    ljlk_elec = _make_ljlk_elec_sorted(bundle)
     lkball = _make_lkball_bridge_split(bundle)
     hs = bundle.hs
 
     def fast(coords_PN3) -> dict:
         c = jnp.asarray(coords_PN3)
         out: dict = {}
-        out.update(ljlk(c))
-        out.update(elec(c))
+        out.update(ljlk_elec(c))
         out.update(lkball(c))
         out.update(_hbond_multipose_energy(hs, c))
         return out
@@ -450,6 +433,7 @@ def _make_lkball_bridge_split_ragged(b: S3Bundle):
             "i_is_hydroxyl": g("is_hydroxyl", I), "j_is_hydroxyl": g("is_hydroxyl", J),
             "i_is_polarh": g("is_polarh", I), "j_is_polarh": g("is_polarh", J),
             "i_is_acceptor": g("is_acceptor", I), "j_is_acceptor": g("is_acceptor", J),
+            "i_is_carbon_lk": g("is_carbon_lk", I), "j_is_carbon_lk": g("is_carbon_lk", J),
         }
 
     prmA, prmB = gather_prm(aI, aJ), gather_prm(bI, bJ)
@@ -464,6 +448,8 @@ def _make_lkball_bridge_split_ragged(b: S3Bundle):
         lk_iso = lk_isotropic_pair_simplified(
             dist, sigma, prm["i_lj_radius"], prm["i_lk_dgfree"],
             prm["i_lk_lambda"], prm["j_lk_volume"], bb,
+            is_cc_pair=(jnp.asarray(prm["i_is_carbon_lk"]) > 0.5)
+            & (jnp.asarray(prm["j_is_carbon_lk"]) > 0.5),
         )
         frac = lk_fraction(swi, cj, prm["j_lj_radius"], _DEF.ramp_width_A2, wi_mask)
         g = jnp.logical_and(has_w, within).astype(lk_iso.dtype)

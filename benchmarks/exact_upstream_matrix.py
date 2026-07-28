@@ -74,17 +74,17 @@ import numpy as np
 
 
 SCHEMA_VERSION = 1
-UPSTREAM_VERSION = "0.1.36"
-UPSTREAM_RELEASE_COMMIT = "ea3d46295ab142c9f6f57a171638d420af41e034"
+UPSTREAM_VERSION = "0.1.40"
+UPSTREAM_RELEASE_COMMIT = "d1be9d62434b5e6d30d92e39e5c8259571bd25f8"
 UPSTREAM_WHEEL_FILENAME = (
-    "tmol-0.1.36+cu128torch2.10-cp312-cp312-linux_x86_64.whl"
+    "tmol-0.1.40+cu128torch2.10-cp312-cp312-linux_x86_64.whl"
 )
 UPSTREAM_WHEEL_URL = (
-    "https://github.com/uw-ipd/tmol/releases/download/v0.1.36/"
+    "https://github.com/uw-ipd/tmol/releases/download/v0.1.40/"
     + UPSTREAM_WHEEL_FILENAME
 )
 UPSTREAM_WHEEL_SHA256 = (
-    "2093723b74eb4fff4a7ccf2ccb2f08f3bcee5171fc092044a38871ccecbd89dc"
+    "47c03cfaba48deb861994fadab62d857a5dc24365722cafff84e87c14442f18e"
 )
 JAX_VERSION = "0.10.2"
 JAXLIB_VERSION = "0.10.2"
