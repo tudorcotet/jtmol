@@ -256,6 +256,7 @@ def lk_isotropic_pair_simplified(
     lk_lambda_i: Array,
     lk_volume_j: Array,
     bonded_path_length: Array | None = None,
+    is_cc_pair: Array | None = None,
 ) -> Array:
     """Isotropic LK (i-against-j direction) with upstream's piecewise ramp.
 
@@ -282,6 +283,12 @@ def lk_isotropic_pair_simplified(
         Optional; if provided, a count-pair weight is applied as in
         upstream (>4: 1.0, ==4: 0.2, <4: 0.0). If ``None`` we treat the
         pair as "far enough along the graph" and return unweighted.
+    is_cc_pair
+        Optional carbon-carbon pair flag (upstream tmol >= 0.1.40, PR
+        #393): when both atoms are LK-carbon types (CH1/CH2/CH3/Caro),
+        ``d_min`` is raised to ``max(d_min, 4.2)``, flattening close-range
+        desolvation for C-C pairs. ``None`` (or all-False) keeps the
+        standard ``d_min``.
 
     Returns
     -------
@@ -292,10 +299,22 @@ def lk_isotropic_pair_simplified(
     sigma = jnp.asarray(lj_sigma_ij)
 
     d_min = sigma * 0.89
+    # C-C desolvation flatten (upstream tmol #393): for carbon-carbon
+    # pairs Rosetta raises d_min to 4.2 A, extending the close-range
+    # plateau so aliphatic/aromatic carbons barely desolvate each other.
+    if is_cc_pair is None:
+        is_cc_pair = jnp.zeros((), dtype=jnp.bool_)
+    cc = jnp.asarray(is_cc_pair, dtype=jnp.bool_)
+    d_min = jnp.where(cc, jnp.maximum(d_min, 4.2), d_min)
 
-    # Upstream: ``cpoly_close_dmin = sqrt(max(d_min^2 - 1.45, 0.01))``.
-    cpoly_close_dmin = jnp.sqrt(jnp.maximum(d_min * d_min - 1.45, 0.01))
-    cpoly_close_dmax = jnp.sqrt(jnp.maximum(d_min * d_min + 1.05, 1e-8))
+    # Close-spline knots lie on etable bins spaced 1/20 A^2 apart
+    # (upstream tmol #393, ``lk_isotropic.hh``):
+    #   n = floor(20 * d_min^2)
+    #   cpoly_close_dmin = sqrt(max(0, n - 29) / 20)
+    #   cpoly_close_dmax = sqrt(min(n + 21, 405) / 20)
+    n_bin = jnp.floor(20.0 * d_min * d_min)
+    cpoly_close_dmin = jnp.sqrt(jnp.maximum(n_bin - 29.0, 0.0) / 20.0)
+    cpoly_close_dmax = jnp.sqrt(jnp.minimum(n_bin + 21.0, 405.0) / 20.0)
     cpoly_far_dmin = jnp.asarray(4.5)
     cpoly_far_dmax = jnp.asarray(6.0)
 
@@ -952,6 +971,8 @@ def lk_ball_pair(
         * ``i_lj_radius, j_lj_radius``
         * ``i_lk_dgfree``, ``i_lk_lambda``, ``j_lk_volume``
         * ``i_is_donor / j_is_donor`` etc. (bool / 0-1)
+        * ``i_is_carbon_lk / j_is_carbon_lk`` (bool / 0-1, upstream #393
+          C-C desolvation flatten; missing = not a carbon pair)
         * Any key from :class:`LKBallDefaults` overrides the default.
     defaults
         Fallback constants for keys missing from ``params``.
@@ -1013,6 +1034,13 @@ def lk_ball_pair(
     # --- Distance cutoff --------------------------------------------------
     within_cutoff = dist < defaults.distance_threshold
 
+    # Carbon-carbon pair flag (upstream tmol >= 0.1.40, PR #393): both
+    # atoms are LK-carbon types (CH1/CH2/CH3/Caro). Symmetric in i/j.
+    is_cc_pair = jnp.logical_and(
+        jnp.asarray(params.get("i_is_carbon_lk", 0.0)) > 0.5,
+        jnp.asarray(params.get("j_is_carbon_lk", 0.0)) > 0.5,
+    )
+
     # --- LK isotropic (upstream uses the pair-direction only) -------------
     lk_iso = lk_isotropic_pair_simplified(
         dist=dist,
@@ -1022,6 +1050,7 @@ def lk_ball_pair(
         lk_lambda_i=params["i_lk_lambda"],
         lk_volume_j=params["j_lk_volume"],
         bonded_path_length=bonded_path_length,
+        is_cc_pair=is_cc_pair,
     )
 
     # --- Water desolvation fraction ---------------------------------------

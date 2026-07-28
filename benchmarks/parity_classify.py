@@ -25,8 +25,8 @@ beta2016 channels, energy + per-channel gradient. Emits a verdict table + JSON.
 from __future__ import annotations
 import pathlib, modal
 REPO = pathlib.Path(__file__).resolve().parents[1]
-WHEEL = ("https://github.com/uw-ipd/tmol/releases/download/v0.1.36/"
-         "tmol-0.1.36+cu128torch2.10-cp312-cp312-linux_x86_64.whl")
+WHEEL = ("https://github.com/uw-ipd/tmol/releases/download/v0.1.40/"
+         "tmol-0.1.40+cu128torch2.10-cp312-cp312-linux_x86_64.whl")
 image = (
     modal.Image.debian_slim(python_version="3.12").apt_install("git")
     .pip_install("torch==2.10.*", index_url="https://download.pytorch.org/whl/cu128")

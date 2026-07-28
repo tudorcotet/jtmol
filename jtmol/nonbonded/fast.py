@@ -206,7 +206,7 @@ def _make_lkball_bridge_split(bundle: S2Bundle) -> Callable:
 
     _PP = (
         "lj_radius", "lk_dgfree", "lk_lambda", "lk_volume", "is_donor", "is_acceptor",
-        "is_hydroxyl", "is_polarh", "is_polar", "is_occluder", "is_real",
+        "is_hydroxyl", "is_polarh", "is_carbon_lk", "is_polar", "is_occluder", "is_real",
         "B_idx", "B0_idx", "acc_hybridization", "attached_H_idx", "attached_H_mask",
         "n_attached_H",
     )
@@ -248,6 +248,7 @@ def _make_lkball_bridge_split(bundle: S2Bundle) -> Callable:
             "i_is_hydroxyl": g("is_hydroxyl", I), "j_is_hydroxyl": g("is_hydroxyl", J),
             "i_is_polarh": g("is_polarh", I), "j_is_polarh": g("is_polarh", J),
             "i_is_acceptor": g("is_acceptor", I), "j_is_acceptor": g("is_acceptor", J),
+            "i_is_carbon_lk": g("is_carbon_lk", I), "j_is_carbon_lk": g("is_carbon_lk", J),
         }
 
     def pair_no_bridge(ci, wi, cj, wj, prm, b):
@@ -260,6 +261,8 @@ def _make_lkball_bridge_split(bundle: S2Bundle) -> Callable:
         lk_iso = lk_isotropic_pair_simplified(
             dist, sigma, prm["i_lj_radius"], prm["i_lk_dgfree"],
             prm["i_lk_lambda"], prm["j_lk_volume"], b,
+            is_cc_pair=(jnp.asarray(prm["i_is_carbon_lk"]) > 0.5)
+            & (jnp.asarray(prm["j_is_carbon_lk"]) > 0.5),
         )
         frac = lk_fraction(swi, cj, prm["j_lj_radius"], _DEF.ramp_width_A2, wi_mask)
         g = jnp.logical_and(has_w, within).astype(lk_iso.dtype)
@@ -430,6 +433,7 @@ def _make_lkball_bridge_split_ragged(b: S3Bundle):
             "i_is_hydroxyl": g("is_hydroxyl", I), "j_is_hydroxyl": g("is_hydroxyl", J),
             "i_is_polarh": g("is_polarh", I), "j_is_polarh": g("is_polarh", J),
             "i_is_acceptor": g("is_acceptor", I), "j_is_acceptor": g("is_acceptor", J),
+            "i_is_carbon_lk": g("is_carbon_lk", I), "j_is_carbon_lk": g("is_carbon_lk", J),
         }
 
     prmA, prmB = gather_prm(aI, aJ), gather_prm(bI, bJ)
@@ -444,6 +448,8 @@ def _make_lkball_bridge_split_ragged(b: S3Bundle):
         lk_iso = lk_isotropic_pair_simplified(
             dist, sigma, prm["i_lj_radius"], prm["i_lk_dgfree"],
             prm["i_lk_lambda"], prm["j_lk_volume"], bb,
+            is_cc_pair=(jnp.asarray(prm["i_is_carbon_lk"]) > 0.5)
+            & (jnp.asarray(prm["j_is_carbon_lk"]) > 0.5),
         )
         frac = lk_fraction(swi, cj, prm["j_lj_radius"], _DEF.ramp_width_A2, wi_mask)
         g = jnp.logical_and(has_w, within).astype(lk_iso.dtype)

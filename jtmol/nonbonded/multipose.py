@@ -95,13 +95,14 @@ _SIDE_FIELDS = (
 # the edge path, but still mapped).
 _LKBALL_PERPOSE = (
     "lj_radius", "lk_dgfree", "lk_lambda", "lk_volume", "is_donor", "is_acceptor",
-    "is_hydroxyl", "is_polarh", "is_polar", "is_occluder", "is_real", "B_idx",
+    "is_hydroxyl", "is_polarh", "is_carbon_lk", "is_polar", "is_occluder",
+    "is_real", "B_idx",
     "B0_idx", "acc_hybridization", "attached_H_idx", "attached_H_mask",
     "n_attached_H", "bonded_path_length", "neighbor_idx", "neighbor_mask",
     "bpl_neighbor",
 )
 # lk_ball per-atom fields concatenated for the S3 ragged path.
-_LKBALL_ATOM = _LKBALL_PERPOSE[:17]  # drop the 3 nbr sentinels (rebuilt flat)
+_LKBALL_ATOM = _LKBALL_PERPOSE[:18]  # drop bonded_path_length + 3 nbr sentinels (rebuilt flat)
 # lk_ball atom fields that hold ATOM INDICES (must be pose-offset in the concat).
 _LKBALL_IDX = ("B_idx", "B0_idx", "attached_H_idx")
 
@@ -519,6 +520,7 @@ def _lkball_ragged(b: S3Bundle, c):
         "i_is_hydroxyl": lk["is_hydroxyl"][ei], "j_is_hydroxyl": lk["is_hydroxyl"][ej],
         "i_is_polarh": lk["is_polarh"][ei], "j_is_polarh": lk["is_polarh"][ej],
         "i_is_acceptor": lk["is_acceptor"][ei], "j_is_acceptor": lk["is_acceptor"][ej],
+        "i_is_carbon_lk": lk["is_carbon_lk"][ei], "j_is_carbon_lk": lk["is_carbon_lk"][ej],
     }
 
     def pair_at(coord_i, waters_i, coord_j, waters_j, prm, bpl):
